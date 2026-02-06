@@ -2,11 +2,9 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 import pandas as pd
 from io import StringIO
 import numpy as np
-import faiss
-from sentence_transformers import SentenceTransformer
-from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
-from transformers import pipeline
+from sklearn.neighbors import NearestNeighbors
+from sklearn.cluster import MiniBatchKMeans
 import os
 import json
 from google import genai
@@ -27,20 +25,17 @@ app.add_middleware(
 # In-memory store (MVP). Resets when server restarts.
 STATE = {
     "df": None,
-    "model": None,
-    "embeddings": None,
-    "faiss_index": None,
+    "vectorizer": None,
+    "nn_model": None,
+    "tfidf_matrix": None,
     "kmeans": None,
     "theme_labels": None
 }
 
-GEMINI_MODEL = "gemini-2.0-flash"  # free tier available per pricing page
+if not os.environ.get("GEMINI_API_KEY"):
+    raise RuntimeError("GEMINI_API_KEY is not set")
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-SENTIMENT = pipeline(
-    "sentiment-analysis",
-    model="cardiffnlp/twitter-roberta-base-sentiment-latest"
-)
 
 
 REQUIRED_COLS = ["id", "text", "source", "created_on", "segment", "product_area"]
@@ -66,27 +61,27 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-def build_embeddings_and_index(texts: list[str]) -> tuple[np.ndarray, faiss.Index]:
-    # Fast, good enough model for MVP
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+def build_embeddings_and_index(texts: list[str]):
+    """
+    Lightweight indexing for deployment:
+    - TF-IDF vectors (sparse)
+    - NearestNeighbors over cosine distance
+    Returns: (vectorizer, tfidf_matrix, nn_model)
+    """
+    vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 2))
+    tfidf_matrix = vectorizer.fit_transform(texts)
 
-    # Encode to numpy array (float32 required by FAISS)
-    emb = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
-    emb = emb.astype("float32")
+    nn_model = NearestNeighbors(metric="cosine", algorithm="brute")
+    nn_model.fit(tfidf_matrix)
 
-    # Build FAISS index (cosine similarity via normalized vectors + inner product)
-    faiss.normalize_L2(emb)
-    dim = emb.shape[1]
-    index = faiss.IndexFlatIP(dim)
-    index.add(emb)
+    return vectorizer, tfidf_matrix, nn_model
+    
 
-    return model, emb, index
-
-def run_kmeans(emb: np.ndarray, k: int) -> tuple[KMeans, np.ndarray]:
-    # emb already normalized; KMeans on normalized vectors is fine for MVP
-    km = KMeans(n_clusters=k, random_state=42, n_init="auto")
-    theme_ids = km.fit_predict(emb)
+def run_kmeans(X, k: int):
+    km = MiniBatchKMeans(n_clusters=k, random_state=42, n_init=10, batch_size=256)
+    theme_ids = km.fit_predict(X)
     return km, theme_ids
+    
 
 def label_themes_tfidf(texts: list[str], theme_ids: np.ndarray, topn: int = 5) -> dict[int, str]:
     # Fit TF-IDF over all texts
@@ -249,32 +244,28 @@ async def upload(file: UploadFile = File(...)):
     # Store in memory
     STATE["df"] = df_clean
     texts = df_clean["text"].tolist()
-    model, emb, index = build_embeddings_and_index(texts)
+    vectorizer, tfidf_matrix, nn_model = build_embeddings_and_index(texts)
     
-    STATE["model"] = model
-    STATE["embeddings"] = emb
-    STATE["faiss_index"] = index
+    STATE["vectorizer"] = vectorizer
+    STATE["tfidf_matrix"] = tfidf_matrix
+    STATE["nn_model"] = nn_model
+
     
     # --- Clustering (Jan 6) ---
-    k = 10  
-    km, theme_ids = run_kmeans(emb, k)
+    k = 10
+    km, theme_ids = run_kmeans(tfidf_matrix, k)
     STATE["kmeans"] = km
     
-    # Attach theme_id to dataframe
     STATE["df"] = STATE["df"].copy()
-    sentiments = SENTIMENT(df_clean["text"].tolist())
-
-    STATE["df"]["sentiment_label"] = [s["label"] for s in sentiments]
-    STATE["df"]["sentiment_score"] = [
-    s["score"] if s["label"] == "POSITIVE" else
-    -s["score"] if s["label"] == "NEGATIVE" else 0.0
-    for s in sentiments
-]
     STATE["df"]["theme_id"] = theme_ids.astype(int)
+    texts_all = STATE["df"]["text"].tolist()
+    STATE["theme_labels"] = label_themes_tfidf(texts_all, theme_ids, topn=5)
+
     
-    # Theme labels
-    texts = STATE["df"]["text"].tolist()
-    STATE["theme_labels"] = label_themes_tfidf(texts, theme_ids, topn=5)
+    # Lightweight sentiment for deployment (no transformers)
+    STATE["df"]["sentiment_label"] = "NEUTRAL"
+    STATE["df"]["sentiment_score"] = 0.0
+
 
     return {
         "message": "Upload successful",
@@ -294,30 +285,22 @@ def preview(n: int = 5):
 
 
 @app.get("/similar")
-def similar(q: str, k: int = 5):
-    if STATE["df"] is None or STATE["faiss_index"] is None or STATE["model"] is None:
-        raise HTTPException(status_code=400, detail="No data/index loaded yet. Upload a CSV first.")
+def search_similar(query: str, k: int = 5):
+    if STATE.get("vectorizer") is None or STATE.get("nn_model") is None:
+        return []
 
-    # Embed query
-    q_emb = STATE["model"].encode([q], convert_to_numpy=True).astype("float32")
-    faiss.normalize_L2(q_emb)
-
-    # Search
-    scores, idx = STATE["faiss_index"].search(q_emb, k)
+    q_vec = STATE["vectorizer"].transform([query])
+    dists, idxs = STATE["nn_model"].kneighbors(q_vec, n_neighbors=k)
 
     results = []
-    for score, i in zip(scores[0], idx[0]):
-        row = STATE["df"].iloc[int(i)]
-        results.append({
-            "id": int(row["id"]) if str(row["id"]).isdigit() else row["id"],
-            "text": row["text"],
-            "source": row["source"],
-            "segment": row["segment"],
-            "product_area": row["product_area"],
-            "score": float(score),
-        })
-
-    return {"query": q, "k": k, "results": results}
+    for dist, idx in zip(dists[0], idxs[0]):
+        score = 1.0 - float(dist)  # cosine distance -> similarity-ish
+        results.append((int(idx), score))
+    return {
+    "query": query,
+    "k": k,
+    "results": [{"row_index": int(idx), "score": float(score)} for idx, score in results]
+}
 
 
 @app.get("/themes")
@@ -338,7 +321,7 @@ def themes():
             "theme_id": int(theme_id),
             "label": labels.get(int(theme_id), f"theme_{int(theme_id)}"),
             "count": int(len(g)),
-            "priority_score": metrics["priority_score_100"],
+            "priority_score": metrics.get("priority_score_100", 0.0),
             "confidence": metrics.get("confidence"),
             "score_components": {
                 "volume": metrics.get("volume"),
@@ -383,7 +366,7 @@ def theme_detail(theme_id: int, n: int = 10):
         "theme_id": int(theme_id),
         "label": label,
         "count": int(len(subset)),
-        "priority_score": metrics["priority_score_100"],
+        "priority_score": metrics.get("priority_score_100", 0.0),
         "confidence": confidence,
         "score_components": {
             "volume": int(metrics.get("volume", len(subset))),
@@ -404,12 +387,11 @@ def theme_insight(theme_id: int, n: int = 10):
     df = STATE["df"]
     subset = df[df["theme_id"] == theme_id].copy()
     # --- Step 2A: evidence narrowing (dominant product_area) ---
-    top_area = subset["product_area"].value_counts().idxmax()
-    subset_for_llm = subset[subset["product_area"] == top_area].copy()
-
-
     if subset.empty:
         raise HTTPException(status_code=404, detail="Theme not found")
+    
+    top_area = subset["product_area"].value_counts().idxmax()
+    subset_for_llm = subset[subset["product_area"] == top_area].copy()
 
     # Confidence gate
     if len(subset) < 5:
