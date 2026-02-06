@@ -1,0 +1,154 @@
+id;text;source;created_on;segment;product_area
+1;Date formatting should respect user locale and work reliably when pasting.;customer;27.12.2025;free;onboarding
+2;It would be powerful if filtering integrated with templates and automation.;customer;14.11.2025;paid;editor
+3;Marketing wants to add a Christmas banner promoting AI features on the homepage.;internal_marketing;02.12.2025;internal;internal_marketing
+4;I didn’t understand the difference between pages and databases when I first started using the product.;customer;21.12.2025;free;onboarding
+5;Mobile experience still needs improvement: navigation and UI feel clunky.;customer;09.12.2025;free;mobile_ui
+6;Internal marketing feedback notes that analytics dashboards lack clear storytelling for campaigns.;internal_marketing;24.12.2025;internal;analytics
+7;Sort & filter suggestions by most commonly used or recently used pages.;customer;09.12.2025;paid;workspace
+8;QA testing reveals delayed updates when multiple users edit the same page concurrently.;testing;11.11.2025;internal;collaboration
+9;Design review notes that the editor toolbar feels overcrowded and hard to scan.;internal_design;01.12.2025;internal;editor
+10;Design team suggests simplifying the dashboard layout to reduce cognitive load for new admins.;internal_design;25.12.2025;internal;dashboard
+11;Marketing proposes adding lightweight usage analytics to support growth experiments.;internal_marketing;03.11.2025;paid;analytics
+12;Location properties triggering proximity-based reminders/notifications would be powerful.;customer;22.12.2025;paid;dashboard
+13;Marketing feedback indicates current dashboards are difficult to screenshot cleanly for campaigns.;internal_marketing;29.11.2025;internal;dashboard
+14;Sales feedback suggests permission settings are a frequent blocker in enterprise onboarding calls.;internal_sales;03.12.2025;internal;permissions
+15;Internal review suggests improving onboarding guidance for database relations.;internal_design;08.11.2025;internal;onboarding
+16;Design team proposes refreshing the dashboard visual hierarchy to reduce cognitive overload.;internal_design;02.12.2025;internal;internal_design
+17;Version history does not load correctly on mobile web during QA testing.;testing;23.12.2025;internal;versioning
+18;QA identified performance degradation in workspaces with more than 100 collaborators.;performance;24.12.2025;internal;workspace
+19;Design feedback recommends updating iconography to better align with the new brand system.;internal_design;01.12.2025;internal;internal_design
+20;Design team suggests improving empty states to better guide first-time users.;internal_design;03.11.2025;internal;internal_design
+21;Design team proposes improving mobile spacing and touch targets for better usability.;internal_design;22.11.2025;internal;mobile_ui
+22;Password-protected pages would make Notion more secure for sensitive use cases.;customer;19.11.2025;enterprise;permissions
+23;Marketing wants better in-product callouts to support feature adoption campaigns.;internal_marketing;05.12.2025;internal;marketing_initiative
+24;QA reports that mobile UI breaks when switching between portrait and landscape mode.;testing;15.11.2025;internal;mobile_ui
+25;Integrated or designated mind map feature would improve planning and thinking workflows.;customer;17.12.2025;paid;collaboration
+26;Design team suggests simplifying the dashboard layout to reduce cognitive load for new team admins.;internal_design;21.12.2025;internal;dashboard
+27;Support team recommends clearer permission labels to reduce incoming access-related tickets.;internal_support;22.12.2025;internal;permissions
+28;Proper version control with named versions and compare/contrast would be useful.;customer;23.12.2025;enterprise;dashboard
+29;The editor becomes noticeably slow when working with large pages containing many blocks.;customer;01.12.2025;paid;editor
+30;Marketing wants to add a New Year banner promoting AI features on the homepage.;internal_marketing;11.12.2025;internal;internal_marketing
+31;Custom commands or keyboard shortcuts (e.g., templated formatting) would speed workflows.;customer;10.12.2025;paid;editor
+32;Ability to set filters in relation properties so only relevant items show up.;customer;16.12.2025;paid;editor
+33;During testing, pages with many nested blocks occasionally fail to save changes.;testing;30.11.2025;internal;editor
+34;Archive action that excludes content from search would help reduce noise.;customer;12.11.2025;paid;search
+35;Sales wants clearer usage analytics to help justify value during renewal conversations.;internal_sales;06.12.2025;internal;sales_enablement
+36;Sales team suggests surfacing key collaboration metrics directly on the main dashboard for demos.;internal_sales;09.11.2025;internal;sales_enablement
+37;Support team recommends clearer error messages when sync issues occur.;internal_support;08.12.2025;internal;workspace
+38;Marketing suggests highlighting enterprise security features more prominently during onboarding.;internal_marketing;06.12.2025;internal;onboarding
+39;Internal review flags inconsistent behavior in version history across devices.;testing;14.12.2025;internal;versioning
+40;Support suggests surfacing version recovery more clearly to reduce panic tickets.;internal_support;28.11.2025;internal;versioning
+41;Ability to filter and show more properties when adding to relation fields.;customer;07.12.2025;paid;editor
+42;Add a real read-only view for inline databases, not just editable lists.;customer;28.10.2025;paid;permissions
+43;"Mobile layout controls are missing; cannot edit certain database properties.";customer;21.11.2025;free;mobile_ui
+44;Design feedback indicates permission labels are unclear and cause confusion during sharing.;internal_design;17.11.2025;internal;permissions
+45;Notifications for upcoming deadlines in calendar databases on Android/iOS.;customer;02.11.2025;free;dashboard
+46;Sales feedback indicates current dashboards look cluttered during executive demos.;internal_sales;30.10.2025;internal;sales_enablement
+47;Defaults for date formats and page settings would save configuration time.;customer;14.12.2025;free;onboarding
+48;Marketing team requests a reusable announcement component for product launches.;internal_marketing;25.11.2025;internal;marketing_initiative
+49;It would be useful to have basic analytics showing how often pages are viewed or edited.;customer;12.12.2025;paid;analytics
+50;Sales team requests a simplified demo workspace that highlights collaboration and permissions clearly.;internal_sales;09.11.2025;internal;sales_enablement
+51;Support feedback highlights search complaints from users with large workspaces.;internal_support;21.11.2025;internal;search
+52;Hover highlighting a database row to show selection would improve usability.;internal_design;10.12.2025;internal;internal_marketing
+53;The mobile experience feels cramped, especially when editing tables or databases.;customer;11.11.2025;free;mobile_ui
+54;Need granular permissions so clients can comment but not change filters or views.;customer;30.10.2025;paid;permissions
+55;Design team recommends improving empty states during onboarding to better explain core concepts.;internal_design;20.12.2025;internal;onboarding
+56;Sales team needs easier ways to showcase collaboration features during live demos.;internal_sales;19.11.2025;internal;collaboration
+57;Sales team suggests improving version history visibility to reassure enterprise buyers.;internal_sales;02.12.2025;internal;versioning
+58;Support reports recurring tickets about users accidentally overwriting shared pages.;internal_support;09.11.2025;internal;permissions
+59;Collaboration feels messy when multiple people edit the same page at the same time.;customer;03.11.2025;paid;collaboration
+60;Our team dashboard is cluttered and it’s hard to quickly find key metrics during reviews.;customer;10.11.2025;enterprise;dashboard
+61;QA testing found intermittent save failures when editing large documents.;testing;20.11.2025;internal;editor
+62;Enterprise workspace sync takes too long after login, sometimes over 20 seconds.;customer;29.11.2025;enterprise;workspace
+63;The overly curved card borders in the UI needs update to avoid it being clumsy and should be optional.;internal_design;04.12.2025;internal;internal_marketing
+64;Internal support suggests adding inline tips for permissions to reduce repeat questions.;internal_support;02.12.2025;internal;support_ux
+65;Show backlinks distinctly in layout rather than bury them in page view.;customer;05.12.2025;paid;collaboration
+66;Dynamically filtering relation suggestions would save time and reduce manual work.;customer;20.11.2025;paid;editor
+67;Sharing permissions are confusing, and I accidentally gave edit access instead of view-only.;customer;14.12.2025;paid;permissions
+68;Ability to split database properties into multiple columns within the layout.;customer;03.12.2025;paid;dashboard
+69;Support team flags confusion around database relations as a top driver of help requests.;internal_support;14.11.2025;internal;editor
+70;Apple Pencil & handwriting support on mobile should be added.;customer;23.12.2025;free;mobile_ui
+71;QA reports search indexing delays after bulk imports.;performance;01.11.2025;internal;search
+72;Sales requests more reliable search performance when demoing large workspaces.;internal_sales;14.12.2025;internal;search
+73;Sales requests clearer workspace-level analytics to support enterprise demos.;internal_sales;26.12.2025;internal;analytics
+74;Ability to combine multiple calendars and show upcoming events on any page.;customer;27.11.2025;free;collaboration
+75;Add sticky blocks in mobile view (e.g., timeline header blocks) so they don’t move while scrolling.;customer;25.11.2025;paid;mobile_ui
+76;Internal sales feedback indicates dashboard clutter makes executive demos less effective.;internal_sales;19.12.2025;internal;dashboard
+77;Search results don’t surface older documents unless I remember the exact page title.;customer;17.12.2025;paid;search
+78;Design review notes inconsistent spacing and alignment across editor components.;internal_design;04.12.2025;internal;internal_design
+79;Managing large databases feels cumbersome, especially when relations become deeply nested.;customer;15.11.2025;paid;editor
+80;It’s hard to understand how databases relate to each other when building more complex workflows.;customer;03.11.2025;paid;editor
+81;Search often returns too many irrelevant results when working in large workspaces.;customer;30.11.2025;paid;search
+82;Permissions are confusing for shared workspaces, especially when collaborating with external users.;customer;29.10.2025;enterprise;permissions
+83;The dashboard becomes cluttered as teams grow, making it hard to get a quick overview.;customer;23.11.2025;enterprise;dashboard
+84;Editor performance degrades noticeably when pages include many embedded databases.;customer;22.11.2025;paid;editor
+85;Collaboration can feel chaotic when multiple people edit the same page simultaneously.;customer;09.11.2025;paid;collaboration
+86;Version history is difficult to navigate when trying to recover earlier edits.;customer;09.12.2025;paid;versioning
+87;Mobile editing feels limited compared to desktop, especially for database-heavy pages.;customer;26.11.2025;free;mobile_ui
+88;Onboarding does not clearly explain best practices for structuring databases.;customer;17.11.2025;free;onboarding
+89;Workspace performance slows down significantly once a team reaches a certain size.;customer;14.11.2025;enterprise;workspace
+90;Analytics are missing for understanding how often pages are viewed or edited by teammates.;customer;09.11.2025;paid;analytics
+91;Search indexing seems delayed after importing a large number of documents.;customer;10.11.2025;paid;search
+92;Collaboration features don’t clearly show who changed what during rapid edits.;customer;04.12.2025;paid;collaboration
+93;Permissions should be easier to audit at the workspace level.;customer;08.12.2025;enterprise;permissions
+94;Dashboard customization options feel limited for enterprise teams.;customer;03.11.2025;enterprise;dashboard
+95;Editor reliability suffers when working with very long documents.;customer;29.10.2025;paid;editor
+96;Onboarding assumes prior knowledge and feels overwhelming for new users.;customer;05.11.2025;free;onboarding
+97;Collaboration workflows could benefit from clearer activity summaries.;customer;04.11.2025;paid;collaboration
+98;Ability to type superscript and subscript in normal text. Can be done using inline equation, but the text formatting will be different and is annoying.;customer;17.12.2025;free;editor
+99;Document outline navigation on iOS Mobile app would be great instead of having to scroll large doc;customer;11.11.2025;free;mobile_ui
+100;I wish the AI nonsense wasn't pushed so hard in the marketing.;customer;13.12.2025;paid;internal_marketing
+101;Linked page icon doesn't appear in table of contents;customer;20.11.2025;paid;editor_reliability
+102;User is constantly asked to confirm cookie preferences again in multiple workspaces (individual and company);customer;22.12.2025;enterprise;editor_reliability
+103;Database header line disappears if you hide database title.;customer;11.12.2025;free;editor_reliability
+104;When typing in LaTeX, every time you type a new character the error notification displays. ;customer;10.11.2025;free;editor_reliability
+105;For Notion Calendar, could we put events within events? For example, if I have a main block called Reachouts I would have sub-events called reachout to Mark;customer;22.11.2025;paid;workspace
+106;Incorporate Printing services onto the ecosystem from any page and on all platforms (mobile, desktop, web);customer;08.11.2025;paid;workspace
+107;Working with complex databases becomes overwhelming once relations stack up across multiple pages.;customer;08.11.2025;paid;editor
+108;Editor slows down noticeably when pages include many formulas and rollups.;customer;04.12.2025;paid;workspace
+109;Onboarding does not clearly explain when to use pages versus databases.;customer;07.11.2025;free;onboarding
+110;The dashboard feels cluttered once multiple teams start adding views and widgets.;customer;20.11.2025;enterprise;dashboard
+111;Permissions are difficult to audit when managing a large workspace.;customer;28.12.2025;enterprise;permissions
+112;Search struggles to surface relevant results in workspaces with hundreds of pages.;customer;30.10.2025;paid;search
+113;Mobile editing feels limited compared to desktop, especially for databases.;customer;28.10.2025;free;mobile_ui
+114;Collaboration gets confusing when multiple people edit a page simultaneously.;customer;18.12.2025;paid;collaboration
+115;Workspace performance degrades as more members are added.;customer;03.11.2025;enterprise;workspace
+116;Version history is hard to scan when trying to recover a specific change.;customer;12.11.2025;paid;versioning
+117;Analytics are missing for understanding which pages are actually being used.;customer;31.10.2025;paid;analytics
+118;Editor occasionally fails to save changes on very long documents.;customer;05.12.2025;paid;editor_reliability
+119;Onboarding feels overwhelming for new users without prior experience.;customer;20.11.2025;free;onboarding
+120;Dashboard customization options feel too limited for enterprise teams.;customer;25.12.2025;enterprise;dashboard
+121;Permission settings are confusing when sharing content with external collaborators.;customer;20.11.2025;paid;permissions
+122;Search indexing seems delayed after importing a large number of pages.;customer;28.10.2025;paid;search
+123;Mobile navigation makes it hard to jump between related pages quickly.;customer;28.12.2025;free;mobile_ui
+124;Collaboration activity logs don’t clearly show who changed what.;customer;23.11.2025;paid;collaboration
+125;Workspace sync can take a long time after logging in.;customer;19.11.2025;enterprise;workspace
+126;Version recovery is not obvious when content is accidentally deleted.;customer;07.11.2025;paid;versioning
+127;Analytics would be more useful if they showed trends over time, not just totals.;customer;31.10.2025;paid;analytics
+128;Editor reliability issues appear when embedding multiple databases in one page.;customer;25.11.2025;paid;editor_reliability
+129;Onboarding does not highlight best practices for structuring complex workspaces.;customer;11.11.2025;free;onboarding
+130;Dashboard views become hard to manage as more filters are added.;customer;06.12.2025;enterprise;dashboard
+131;Permissions should be easier to review at the workspace level.;customer;28.12.2025;enterprise;permissions
+132;Search results often require too much manual filtering to find relevant content.;customer;19.11.2025;paid;search
+133;Mobile UI feels cramped when working with tables and formulas.;customer;01.12.2025;free;mobile_ui
+134;Collaboration notifications are too noisy and hard to interpret.;customer;02.11.2025;paid;collaboration
+135;Workspace performance slows down during peak collaboration hours.;customer;18.11.2025;enterprise;workspace
+136;Version history lacks clear comparison between revisions.;customer;06.11.2025;paid;versioning
+137;Analytics should differentiate between viewers and editors.;customer;07.12.2025;paid;analytics
+138;Editor crashes occasionally when pasting large amounts of content.;customer;05.11.2025;paid;editor_reliability
+139;Onboarding assumes users already understand database concepts.;customer;14.12.2025;free;onboarding
+140;Dashboards feel visually overwhelming for executives reviewing data.;customer;24.11.2025;enterprise;dashboard
+141;Permission inheritance rules are unclear in nested pages.;customer;14.12.2025;paid;permissions
+142;Search performance drops noticeably in very large workspaces.;customer;27.12.2025;enterprise;search
+143;Mobile UI does not support all editor features available on desktop.;customer;05.11.2025;free;mobile_ui
+144;Collaboration features don’t clearly indicate when someone is actively editing.;customer;03.11.2025;paid;collaboration
+145;Workspace load times increase as more integrations are added.;customer;15.12.2025;enterprise;workspace
+146;Version history navigation feels unintuitive when reviewing past changes.;customer;29.10.2025;paid;versioning
+147;Analytics dashboards lack actionable insights for team leads.;customer;10.11.2025;paid;analytics
+148;Editor reliability issues occur more frequently on older pages.;customer;08.12.2025;paid;editor_reliability
+149;Onboarding tutorials feel too generic for different user roles.;customer;22.11.2025;free;onboarding
+150;Dashboard layouts do not scale well for very large teams.;customer;28.12.2025;enterprise;dashboard
+151;Permission settings require too many clicks to configure correctly.;customer;13.11.2025;paid;permissions
+152;Search results sometimes surface outdated pages before current ones.;customer;02.12.2025;paid;search
+153;Mobile UI performance lags when switching between pages quickly.;customer;05.11.2025;free;mobile_ui
