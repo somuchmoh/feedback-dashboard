@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 import pandas as pd
 from io import StringIO
 import numpy as np
+from pathlib import Path
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import MiniBatchKMeans
@@ -431,4 +432,48 @@ def theme_insight(theme_id: int, n: int = 10):
         "insight": insight,
         "evidence": evidence_texts,
         "disclaimer": "AI-assisted insight. Final decisions require human review."
+    }
+
+@app.post("/load_demo")
+def load_demo(k: int = 10):
+    demo_path = Path(__file__).parent / "data" / "demo.csv"
+    if not demo_path.exists():
+        raise HTTPException(status_code=500, detail="Demo dataset not found on server")
+
+    df = pd.read_csv(
+        demo_path,
+        sep=";",
+        engine="python",
+        quotechar='"',
+        escapechar="\\",
+    )
+
+    df_clean = clean_df(df)
+
+    STATE["df"] = df_clean
+    texts = df_clean["text"].tolist()
+    vectorizer, tfidf_matrix, nn_model = build_embeddings_and_index(texts)
+
+    STATE["vectorizer"] = vectorizer
+    STATE["tfidf_matrix"] = tfidf_matrix
+    STATE["nn_model"] = nn_model
+
+    km, theme_ids = run_kmeans(tfidf_matrix, k)
+    STATE["kmeans"] = km
+
+    STATE["df"] = STATE["df"].copy()
+    STATE["df"]["theme_id"] = theme_ids.astype(int)
+    STATE["df"]["sentiment_label"] = "NEUTRAL"
+    STATE["df"]["sentiment_score"] = 0.0
+
+    STATE["theme_labels"] = label_themes_tfidf(
+        STATE["df"]["text"].tolist(),
+        theme_ids,
+        topn=5
+    )
+
+    return {
+        "message": "Demo dataset loaded",
+        "rows_loaded": int(len(df_clean)),
+        "num_themes": int(k)
     }
