@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 import pandas as pd
+import csv
 from io import StringIO
 import numpy as np
 import traceback
@@ -228,14 +229,13 @@ async def upload(file: UploadFile = File(...)):
 
     # Read CSV
     try:
-        df = raw_text = demo_path.read_text(encoding="utf-8", errors="replace")
         df = pd.read_csv(
-            StringIO(raw_text),
-            sep=None,            # auto-detect delimiter
-            engine="python",
-            quotechar='"',
-            escapechar="\\",
-        )
+    StringIO(text),
+    sep=";",
+    engine="python",
+    quotechar='"',
+    escapechar="\\",
+)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read CSV: {str(e)}")
 
@@ -443,9 +443,11 @@ def load_demo(k: int = 10):
         if not demo_path.exists():
             raise RuntimeError(f"demo.csv not found at {demo_path}")
 
+        raw_text = demo_path.read_text(encoding="utf-8", errors="replace")
+
         df = pd.read_csv(
-            demo_path,
-            sep=";",
+            StringIO(raw_text),
+            sep=None,            # auto-detect delimiter
             engine="python",
             quotechar='"',
             escapechar="\\",
