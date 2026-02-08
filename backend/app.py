@@ -228,13 +228,14 @@ async def upload(file: UploadFile = File(...)):
 
     # Read CSV
     try:
+        df = raw_text = demo_path.read_text(encoding="utf-8", errors="replace")
         df = pd.read_csv(
-    StringIO(text),
-    sep=";",
-    engine="python",
-    quotechar='"',
-    escapechar="\\",
-)
+            StringIO(raw_text),
+            sep=None,            # auto-detect delimiter
+            engine="python",
+            quotechar='"',
+            escapechar="\\",
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read CSV: {str(e)}")
 
