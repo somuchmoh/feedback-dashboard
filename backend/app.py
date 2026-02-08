@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 import pandas as pd
 from io import StringIO
 import numpy as np
+import traceback
 from pathlib import Path
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
@@ -436,44 +437,45 @@ def theme_insight(theme_id: int, n: int = 10):
 
 @app.post("/load_demo")
 def load_demo(k: int = 10):
-    demo_path = Path(__file__).parent / "data" / "demo.csv"
-    if not demo_path.exists():
-        raise HTTPException(status_code=500, detail="Demo dataset not found on server")
+    try:
+        demo_path = Path(__file__).parent / "data" / "demo.csv"
+        if not demo_path.exists():
+            raise RuntimeError(f"demo.csv not found at {demo_path}")
 
-    df = pd.read_csv(
-        demo_path,
-        sep=";",
-        engine="python",
-        quotechar='"',
-        escapechar="\\",
-    )
+        df = pd.read_csv(
+            demo_path,
+            sep=";",
+            engine="python",
+            quotechar='"',
+            escapechar="\\",
+        )
 
-    df_clean = clean_df(df)
+        df_clean = clean_df(df)
 
-    STATE["df"] = df_clean
-    texts = df_clean["text"].tolist()
-    vectorizer, tfidf_matrix, nn_model = build_embeddings_and_index(texts)
+        STATE["df"] = df_clean
+        texts = df_clean["text"].tolist()
 
-    STATE["vectorizer"] = vectorizer
-    STATE["tfidf_matrix"] = tfidf_matrix
-    STATE["nn_model"] = nn_model
+        vectorizer, tfidf_matrix, nn_model = build_embeddings_and_index(texts)
+        STATE["vectorizer"] = vectorizer
+        STATE["tfidf_matrix"] = tfidf_matrix
+        STATE["nn_model"] = nn_model
 
-    km, theme_ids = run_kmeans(tfidf_matrix, k)
-    STATE["kmeans"] = km
+        km, theme_ids = run_kmeans(tfidf_matrix, k)
+        STATE["kmeans"] = km
 
-    STATE["df"] = STATE["df"].copy()
-    STATE["df"]["theme_id"] = theme_ids.astype(int)
-    STATE["df"]["sentiment_label"] = "NEUTRAL"
-    STATE["df"]["sentiment_score"] = 0.0
+        STATE["df"] = STATE["df"].copy()
+        STATE["df"]["theme_id"] = theme_ids.astype(int)
+        STATE["df"]["sentiment_label"] = "NEUTRAL"
+        STATE["df"]["sentiment_score"] = 0.0
 
-    STATE["theme_labels"] = label_themes_tfidf(
-        STATE["df"]["text"].tolist(),
-        theme_ids,
-        topn=5
-    )
+        STATE["theme_labels"] = label_themes_tfidf(
+            STATE["df"]["text"].tolist(),
+            theme_ids,
+            topn=5
+        )
 
-    return {
-        "message": "Demo dataset loaded",
-        "rows_loaded": int(len(df_clean)),
-        "num_themes": int(k)
-    }
+        return {"message": "Demo loaded", "rows_loaded": int(len(df_clean)), "num_themes": int(k)}
+
+    except Exception:
+        tb = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=tb)
