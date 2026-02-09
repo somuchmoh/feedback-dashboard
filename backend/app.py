@@ -9,6 +9,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import MiniBatchKMeans
 import os
+import time
 import json
 from google import genai
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,7 +33,8 @@ STATE = {
     "nn_model": None,
     "tfidf_matrix": None,
     "kmeans": None,
-    "theme_labels": None
+    "theme_labels": None,
+    "insight_cache": {}
 }
 
 if not os.environ.get("GEMINI_API_KEY"):
@@ -171,10 +173,9 @@ def select_evidence(df, theme_id, n=10):
         ["id", "text", "source", "segment", "product_area", "created_on"]
     ].to_dict(orient="records")
 
-def generate_insight_from_evidence_gemini(evidence_texts):
-    prompt = f"""
-You are assisting a product manager.
 
+def generate_insight_from_evidence_gemini(evidence_texts):
+    prompt = f"""You are assisting a product manager.
 You MUST use only the evidence provided.
 Do NOT invent features, dates, campaigns, or UI elements not explicitly mentioned in evidence.
 If evidence spans multiple unrelated requests, choose the single most common/central problem and ignore the rest.
@@ -191,19 +192,27 @@ risks: string (must list 2-3 realistic risks: misclassification, overfitting to 
 evidence_refs: array of integers (indices of evidence items used, 0-based)
 """
 
-    response = client.models.generate_content(
-        model="gemini-3-flash-preview",
-        contents=prompt,
-    )
+    last_err = None
+    for attempt in range(2):  # 2 tries max
+        try:
+            resp = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                # If your SDK supports config, add:
+                # config={"temperature": 0.2, "max_output_tokens": 500}
+            )
+            text = resp.text.strip()
 
-    text = response.text.strip()
+            if "```" in text:
+                text = text.split("```")[1].strip()
+                if text.lower().startswith("json"):
+                    text = text[4:].strip()
 
-    if "```" in text:
-        text = text.split("```")[1].strip()
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-
-    return json.loads(text)
+            return json.loads(text)
+        except Exception as e:
+            last_err = e
+            time.sleep(0.6)
+    raise last_err
 
 
 @app.get("/health")
@@ -383,51 +392,59 @@ def theme_detail(theme_id: int, n: int = 10):
     }
 
 @app.get("/themes/{theme_id}/insight")
-def theme_insight(theme_id: int, n: int = 10):
+def theme_insight(theme_id: int, n: int = 6):
     if STATE["df"] is None:
         raise HTTPException(status_code=400, detail="No data available. Upload first.")
 
+    # Cache hit
+    cached = STATE.get("insight_cache", {}).get(int(theme_id))
+    if cached:
+        return {
+            "theme_id": int(theme_id),
+            "confidence": "high",
+            "insight": cached["insight"],
+            "evidence": cached["evidence"],
+            "disclaimer": "AI-assisted insight. Final decisions require human review."
+        }
+
     df = STATE["df"]
     subset = df[df["theme_id"] == theme_id].copy()
-    # --- Step 2A: evidence narrowing (dominant product_area) ---
     if subset.empty:
         raise HTTPException(status_code=404, detail="Theme not found")
-    
-    top_area = subset["product_area"].value_counts().idxmax()
-    subset_for_llm = subset[subset["product_area"] == top_area].copy()
 
-    # Confidence gate
     if len(subset) < 5:
+        evidence = subset.head(min(n, len(subset)))["text"].tolist()
         return {
             "theme_id": int(theme_id),
             "confidence": "low",
             "insight": None,
             "message": "insufficient evidence",
-            "evidence": subset.head(min(n, len(subset)))["text"].tolist(),
+            "evidence": evidence,
             "disclaimer": "AI-assisted insight. Final decisions require human review."
         }
 
-    evidence_rows = subset_for_llm.head(10)
-    evidence_texts = evidence_rows["text"].tolist()
+    top_area = subset["product_area"].value_counts().idxmax()
+    subset_for_llm = subset[subset["product_area"] == top_area].copy()
+
+    evidence_texts = subset_for_llm.head(n)["text"].tolist()
 
     try:
         insight = generate_insight_from_evidence_gemini(evidence_texts)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gemini insight failed: {str(e)}")
 
-    # --- guardrails for missing metric / risks ---
-    if str(insight.get("success_metric", "")).strip().lower() == "insufficient evidence":
-        insight["success_metric"] = (
-            "Increase usage of the affected area (weekly active usage) and reduce related support tickets or complaints."
-        )
+    # Guardrails
+    if str(insight.get("success_metric", "")).strip().lower() in ("", "insufficient evidence"):
+        insight["success_metric"] = "Reduce related support tickets and increase weekly usage of the affected feature."
+    if str(insight.get("risks", "")).strip().lower() in ("", "insufficient evidence"):
+        insight["risks"] = "Over-weighting a subset of feedback; UX regression; measurement noise."
 
-    if str(insight.get("risks", "")).strip().lower() == "insufficient evidence":
-        insight["risks"] = (
-            "Risk of over-weighting internal feedback versus customer needs; "
-            "risk of UX regressions from changes; "
-            "risk that metrics do not isolate the impact of the change."
-        )
-        
+    STATE.setdefault("insight_cache", {})[int(theme_id)] = {
+        "ts": time.time(),
+        "insight": insight,
+        "evidence": evidence_texts
+    }
+
     return {
         "theme_id": int(theme_id),
         "confidence": "high",
@@ -435,6 +452,7 @@ def theme_insight(theme_id: int, n: int = 10):
         "evidence": evidence_texts,
         "disclaimer": "AI-assisted insight. Final decisions require human review."
     }
+
 
 @app.post("/load_demo")
 def load_demo(k: int = 10):
