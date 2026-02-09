@@ -9,10 +9,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import MiniBatchKMeans
 import os
-import time
 import json
 import re
 import requests
+import copy
+from time import time
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -28,6 +29,8 @@ app.add_middleware(
 
 
 # In-memory store (MVP). Resets when server restarts.
+DEMO_STATE = None
+RATE = {}
 STATE = {
     "df": None,
     "vectorizer": None,
@@ -65,6 +68,41 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     df["created_on"] = pd.to_datetime(df["created_on"], errors="coerce")
 
     return df
+
+def rate_limit(ip: str, limit=5, window=60):
+    now = time()
+    RATE.setdefault(ip, [])
+    RATE[ip] = [t for t in RATE[ip] if now - t < window]
+    if len(RATE[ip]) >= limit:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    RATE[ip].append(now)
+
+    
+def build_state_from_df(df_clean: pd.DataFrame, k: int = 10) -> dict:
+    texts = df_clean["text"].tolist()
+
+    vectorizer, tfidf_matrix, nn_model = build_embeddings_and_index(texts)
+    km, theme_ids = run_kmeans(tfidf_matrix, k)
+
+    df2 = df_clean.copy()
+    df2["theme_id"] = theme_ids.astype(int)
+
+    # lightweight sentiment
+    df2["sentiment_label"] = "NEUTRAL"
+    df2["sentiment_score"] = 0.0
+
+    theme_labels = label_themes_tfidf(df2["text"].tolist(), theme_ids, topn=5)
+
+    return {
+        "df": df2,
+        "vectorizer": vectorizer,
+        "tfidf_matrix": tfidf_matrix,
+        "nn_model": nn_model,
+        "kmeans": km,
+        "theme_labels": theme_labels,
+        "insight_cache": {},
+    }
+
 
 def build_embeddings_and_index(texts: list[str]):
     """
@@ -248,6 +286,23 @@ evidence_refs: array of integers (indices of evidence items used, 0-based)
 @app.get("/health")
 def health():
     return {"status": "ok", "rows_loaded": 0 if STATE["df"] is None else int(len(STATE["df"]))}
+
+@app.on_event("startup")
+def prepare_demo_state():
+    global DEMO_STATE
+    demo_path = Path(__file__).parent / "data" / "demo.csv"
+    if not demo_path.exists():
+        return
+
+    df = pd.read_csv(
+        demo_path,
+        sep=";",
+        engine="python",
+        quotechar='"',
+        escapechar="\\",
+    )
+    df_clean = clean_df(df)
+    DEMO_STATE = build_state_from_df(df_clean, k=10)
 
 
 @app.post("/upload")
@@ -508,50 +563,19 @@ def theme_insight(theme_id: int, n: int = 6):
         "disclaimer": "AI-assisted insight. Final decisions require human review."
     }
 
-
 @app.post("/load_demo")
-def load_demo(k: int = 10):
-    try:
-        demo_path = Path(__file__).parent / "data" / "demo.csv"
-        if not demo_path.exists():
-            raise RuntimeError(f"demo.csv not found at {demo_path}")
+def load_demo(request: Request):
+    global DEMO_STATE
+    rate_limit(request.client.host, limit=5, window=60)
 
-        raw_text = demo_path.read_text(encoding="utf-8", errors="replace")
+    if DEMO_STATE is None:
+        raise HTTPException(status_code=500, detail="Demo dataset not available on server.")
 
-        df = pd.read_csv(
-            StringIO(raw_text),
-            sep=None,            # auto-detect delimiter
-            engine="python",
-            quotechar='"',
-            escapechar="\\",
-        )
+    STATE.clear()
+    STATE.update(copy.deepcopy(DEMO_STATE))
 
-        df_clean = clean_df(df)
-
-        STATE["df"] = df_clean
-        texts = df_clean["text"].tolist()
-
-        vectorizer, tfidf_matrix, nn_model = build_embeddings_and_index(texts)
-        STATE["vectorizer"] = vectorizer
-        STATE["tfidf_matrix"] = tfidf_matrix
-        STATE["nn_model"] = nn_model
-
-        km, theme_ids = run_kmeans(tfidf_matrix, k)
-        STATE["kmeans"] = km
-
-        STATE["df"] = STATE["df"].copy()
-        STATE["df"]["theme_id"] = theme_ids.astype(int)
-        STATE["df"]["sentiment_label"] = "NEUTRAL"
-        STATE["df"]["sentiment_score"] = 0.0
-
-        STATE["theme_labels"] = label_themes_tfidf(
-            STATE["df"]["text"].tolist(),
-            theme_ids,
-            topn=5
-        )
-
-        return {"message": "Demo loaded", "rows_loaded": int(len(df_clean)), "num_themes": int(k)}
-
-    except Exception:
-        tb = traceback.format_exc()
-        raise HTTPException(status_code=500, detail=tb)
+    return {
+        "message": "Demo loaded",
+        "rows_loaded": int(len(STATE["df"])) if STATE["df"] is not None else 0,
+        "num_themes": int(STATE["df"]["theme_id"].nunique()) if STATE["df"] is not None else 0,
+    }
