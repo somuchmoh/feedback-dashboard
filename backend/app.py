@@ -11,7 +11,8 @@ from sklearn.cluster import MiniBatchKMeans
 import os
 import time
 import json
-from google import genai
+import re
+from openai import OpenAI
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -37,10 +38,14 @@ STATE = {
     "insight_cache": {}
 }
 
-if not os.environ.get("GEMINI_API_KEY"):
-    raise RuntimeError("GEMINI_API_KEY is not set")
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+if not OPENROUTER_API_KEY:
+    raise RuntimeError("OPENROUTER_API_KEY is not set")
 
+or_client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+)
 
 
 REQUIRED_COLS = ["id", "text", "source", "created_on", "segment", "product_area"]
@@ -173,14 +178,28 @@ def select_evidence(df, theme_id, n=10):
         ["id", "text", "source", "segment", "product_area", "created_on"]
     ].to_dict(orient="records")
 
+def _extract_json(s: str) -> str:
+    s = s.strip()
+    if "```" in s:
+        parts = s.split("```")
+        s = max(parts, key=len).strip()
+        s = re.sub(r"^json\s*", "", s.strip(), flags=re.IGNORECASE)
+    start, end = s.find("{"), s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return s[start:end+1]
+    return s
 
-def generate_insight_from_evidence_gemini(evidence_texts):
-    prompt = f"""You are assisting a product manager.
-You MUST use only the evidence provided.
-Do NOT invent features, dates, campaigns, or UI elements not explicitly mentioned in evidence.
-If evidence spans multiple unrelated requests, choose the single most common/central problem and ignore the rest.
 
-EVIDENCE (verbatim feedback items):
+def generate_insight_from_evidence_openrouter(evidence_texts: list[str]) -> dict:
+    prompt = f"""
+You are assisting a product manager.
+
+STRICT:
+- Do NOT invent features, dates, campaigns, or UI elements not explicitly mentioned in evidence.
+- Output ONLY JSON. No markdown. No extra text.
+- If evidence spans multiple unrelated requests, choose the single most common/central problem and ignore the rest.
+
+EVIDENCE:
 {evidence_texts}
 
 Return ONLY valid JSON with exactly these keys:
@@ -193,28 +212,23 @@ evidence_refs: array of integers (indices of evidence items used, 0-based)
 """
 
     last_err = None
-    for attempt in range(2):  # 2 tries max
+    for attempt in range(2):
         try:
-            resp = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                # If your SDK supports config, add:
-                # config={"temperature": 0.2, "max_output_tokens": 500}
+            r = or_client.chat.completions.create(
+                model="openai/gpt-oss-120b:free",
+                messages=[{"role": "user", "content": prompt}],
+                extra_body={"reasoning": {"enabled": False}},
+                # If supported in your openai package version:
+                # timeout=30,
             )
-            text = resp.text.strip()
-
-            if "```" in text:
-                text = text.split("```")[1].strip()
-                if text.lower().startswith("json"):
-                    text = text[4:].strip()
-
-            return json.loads(text)
+            text = (r.choices[0].message.content or "").strip()
+            return json.loads(_extract_json(text))
         except Exception as e:
             last_err = e
-            time.sleep(0.6)
+            time.sleep(0.8)
     raise last_err
 
-
+    
 @app.get("/health")
 def health():
     return {"status": "ok", "rows_loaded": 0 if STATE["df"] is None else int(len(STATE["df"]))}
@@ -396,12 +410,12 @@ def theme_insight(theme_id: int, n: int = 6):
     if STATE["df"] is None:
         raise HTTPException(status_code=400, detail="No data available. Upload first.")
 
-    # Cache hit
+    # Return cached insight if available
     cached = STATE.get("insight_cache", {}).get(int(theme_id))
     if cached:
         return {
             "theme_id": int(theme_id),
-            "confidence": "high",
+            "confidence": cached["confidence"],
             "insight": cached["insight"],
             "evidence": cached["evidence"],
             "disclaimer": "AI-assisted insight. Final decisions require human review."
@@ -412,6 +426,7 @@ def theme_insight(theme_id: int, n: int = 6):
     if subset.empty:
         raise HTTPException(status_code=404, detail="Theme not found")
 
+    # Confidence gate
     if len(subset) < 5:
         evidence = subset.head(min(n, len(subset)))["text"].tolist()
         return {
@@ -423,31 +438,55 @@ def theme_insight(theme_id: int, n: int = 6):
             "disclaimer": "AI-assisted insight. Final decisions require human review."
         }
 
+    # Evidence narrowing: dominant product_area
+    subset = subset.dropna(subset=["product_area"])
+    if subset.empty:
+        raise HTTPException(
+            status_code=500,
+            detail="Theme has no valid product_area values for evidence selection"
+        )
+
     top_area = subset["product_area"].value_counts().idxmax()
     subset_for_llm = subset[subset["product_area"] == top_area].copy()
 
     evidence_texts = subset_for_llm.head(n)["text"].tolist()
 
+    # Confidence level based on evidence strength
+    if len(subset) >= 20:
+        confidence = "high"
+    elif len(subset) >= 10:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    # Generate insight using OpenRouter, with fallback
     try:
-        insight = generate_insight_from_evidence_gemini(evidence_texts)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=traceback.format_exc())
+        insight = generate_insight_from_evidence_openrouter(evidence_texts)
+    except Exception:
+        # Deterministic fallback so UI never breaks
+        label = (STATE.get("theme_labels") or {}).get(
+            int(theme_id), f"theme_{int(theme_id)}"
+        )
+        insight = {
+            "title": f"Theme: {label[:60]}",
+            "summary": "AI insight unavailable due to API limits. Review the evidence below to assess the core problem.",
+            "recommended_action": "Review the evidence, confirm the main issue, and define a fix or experiment.",
+            "success_metric": "Reduce related support tickets and increase usage of the affected feature.",
+            "risks": "Misclassification of feedback; UX regression; measurement noise.",
+            "evidence_refs": list(range(len(evidence_texts)))
+        }
 
-    # Guardrails
-    if str(insight.get("success_metric", "")).strip().lower() in ("", "insufficient evidence"):
-        insight["success_metric"] = "Reduce related support tickets and increase weekly usage of the affected feature."
-    if str(insight.get("risks", "")).strip().lower() in ("", "insufficient evidence"):
-        insight["risks"] = "Over-weighting a subset of feedback; UX regression; measurement noise."
-
+    # Cache result
     STATE.setdefault("insight_cache", {})[int(theme_id)] = {
         "ts": time.time(),
+        "confidence": confidence,
         "insight": insight,
         "evidence": evidence_texts
     }
 
     return {
         "theme_id": int(theme_id),
-        "confidence": "high",
+        "confidence": confidence,
         "insight": insight,
         "evidence": evidence_texts,
         "disclaimer": "AI-assisted insight. Final decisions require human review."
