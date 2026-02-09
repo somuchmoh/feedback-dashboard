@@ -291,19 +291,28 @@ def health():
 def prepare_demo_state():
     global DEMO_STATE
     demo_path = Path(__file__).parent / "data" / "demo.csv"
+
     if not demo_path.exists():
+        DEMO_STATE = None
+        print("[startup] demo.csv not found")
         return
 
-    df = pd.read_csv(
-        demo_path,
-        sep=";",
-        engine="python",
-        quotechar='"',
-        escapechar="\\",
-    )
-    df_clean = clean_df(df)
-    DEMO_STATE = build_state_from_df(df_clean, k=10)
-
+    try:
+        df = pd.read_csv(
+            demo_path,
+            sep=",",                  # IMPORTANT: demo.csv is comma-separated
+            engine="python",
+            quotechar='"',
+            escapechar="\\",
+            on_bad_lines="skip",      # do not crash on malformed rows
+        )
+        df_clean = clean_df(df)
+        DEMO_STATE = build_state_from_df(df_clean, k=10)
+        print(f"[startup] Demo dataset prepared with {len(df_clean)} rows")
+    except Exception as e:
+        DEMO_STATE = None
+        print(f"[startup] Failed to prepare demo dataset: {e}")
+    
 
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
@@ -566,10 +575,14 @@ def theme_insight(theme_id: int, n: int = 6):
 @app.post("/load_demo")
 def load_demo(request: Request):
     global DEMO_STATE
+
     rate_limit(request.client.host, limit=5, window=60)
 
     if DEMO_STATE is None:
-        raise HTTPException(status_code=500, detail="Demo dataset not available on server.")
+        raise HTTPException(
+            status_code=500,
+            detail="Demo dataset not available on server."
+        )
 
     STATE.clear()
     STATE.update(copy.deepcopy(DEMO_STATE))
