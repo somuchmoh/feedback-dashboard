@@ -431,7 +431,7 @@ def theme_insight(theme_id: int, n: int = 6):
     try:
         insight = generate_insight_from_evidence_gemini(evidence_texts)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini insight failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=traceback.format_exc())
 
     # Guardrails
     if str(insight.get("success_metric", "")).strip().lower() in ("", "insufficient evidence"):
