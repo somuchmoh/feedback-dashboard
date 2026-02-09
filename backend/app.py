@@ -12,7 +12,7 @@ import os
 import time
 import json
 import re
-from openai import OpenAI
+import requests
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -178,23 +178,30 @@ def select_evidence(df, theme_id, n=10):
         ["id", "text", "source", "segment", "product_area", "created_on"]
     ].to_dict(orient="records")
 
-def _extract_json(s: str) -> str:
-    s = s.strip()
+def _extract_json_block(s: str) -> str:
+    s = (s or "").strip()
     if "```" in s:
         parts = s.split("```")
+        # choose the largest inner block
         s = max(parts, key=len).strip()
         s = re.sub(r"^json\s*", "", s.strip(), flags=re.IGNORECASE)
-    start, end = s.find("{"), s.rfind("}")
+    # extract first {...} block
+    start = s.find("{")
+    end = s.rfind("}")
     if start != -1 and end != -1 and end > start:
         return s[start:end+1]
     return s
 
 
 def generate_insight_from_evidence_openrouter(evidence_texts: list[str]) -> dict:
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
+
     prompt = f"""
 You are assisting a product manager.
 
-STRICT:
+STRICT RULES:
 - Do NOT invent features, dates, campaigns, or UI elements not explicitly mentioned in evidence.
 - Output ONLY JSON. No markdown. No extra text.
 - If evidence spans multiple unrelated requests, choose the single most common/central problem and ignore the rest.
@@ -211,18 +218,32 @@ risks: string (must list 2-3 realistic risks: misclassification, overfitting to 
 evidence_refs: array of integers (indices of evidence items used, 0-based)
 """
 
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": "openai/gpt-oss-120b:free",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        # disable advanced reasoning if you want faster responses
+        "reasoning": {"enabled": False}
+    }
+
     last_err = None
     for attempt in range(2):
         try:
-            r = or_client.chat.completions.create(
-                model="openai/gpt-oss-120b:free",
-                messages=[{"role": "user", "content": prompt}],
-                extra_body={"reasoning": {"enabled": False}},
-                # If supported in your openai package version:
-                # timeout=30,
-            )
-            text = (r.choices[0].message.content or "").strip()
-            return json.loads(_extract_json(text))
+            resp = requests.post(url, headers=headers, data=json.dumps(body), timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            # OpenRouter shape: choices[0].message.content (string)
+            msg = data.get("choices", [{}])[0].get("message", {})
+            text = msg.get("content", "") if isinstance(msg, dict) else ""
+            text = (text or "").strip()
+            json_block = _extract_json_block(text)
+            return json.loads(json_block)
         except Exception as e:
             last_err = e
             time.sleep(0.8)
