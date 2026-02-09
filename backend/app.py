@@ -42,11 +42,6 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 if not OPENROUTER_API_KEY:
     raise RuntimeError("OPENROUTER_API_KEY is not set")
 
-or_client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
-
 
 REQUIRED_COLS = ["id", "text", "source", "created_on", "segment", "product_area"]
 
