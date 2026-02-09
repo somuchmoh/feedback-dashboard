@@ -13,7 +13,7 @@ import json
 import re
 import requests
 import copy
-from time import time
+import time as time_module
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -558,7 +558,7 @@ def theme_insight(theme_id: int, n: int = 6):
 
     # Cache result
     STATE.setdefault("insight_cache", {})[int(theme_id)] = {
-        "ts": time.time(),
+        "ts": time_module.time(),
         "confidence": confidence,
         "insight": insight,
         "evidence": evidence_texts
