@@ -561,7 +561,7 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
 
     # --- LLM call with safe fallback (NO 503) ---
     try:
-        insight = generate_insight_from_evidence_openrouter(evidence_texts)
+        insight = build_insight_prompt(evidence_texts)
         payload = {
             "theme_id": int(theme_id),
             "confidence": "high" if len(subset) >= 20 else "medium",
