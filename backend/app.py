@@ -319,14 +319,14 @@ def call_openrouter_json(prompt: str) -> Tuple[dict, dict]:
                     retry_after = int(resp.headers.get("Retry-After", "5"))
                 except Exception:
                     pass
-                STATE["rate_limit"] = {"ts": time.time(), "retry_after": retry_after}
-                time.sleep(min(retry_after, 8))
+                STATE["rate_limit"] = {"ts": time_module.time(), "retry_after": retry_after}
+                time_module.sleep(min(retry_after, 8))
                 last_err = RuntimeError("429 rate limited")
                 continue
 
             # Transient server errors
             if resp.status_code in (500, 502, 503, 504):
-                time.sleep(1.5 * (attempt + 1))
+                time_module.sleep(1.5 * (attempt + 1))
                 last_err = RuntimeError(f"{resp.status_code} transient")
                 continue
 
@@ -340,12 +340,12 @@ def call_openrouter_json(prompt: str) -> Tuple[dict, dict]:
 
         except (requests.Timeout, requests.ConnectionError) as e:
             last_err = e
-            time.sleep(1.5 * (attempt + 1))
+            time_module.sleep(1.5 * (attempt + 1))
         except json.JSONDecodeError as e:
             # Provider ignored json mode; retry once with stronger instruction
             last_err = e
             body["messages"][0]["content"] = prompt + "\n\nRETURN JSON ONLY. NO OTHER TEXT."
-            time.sleep(1.0)
+            time_module.sleep(1.0)
 
     raise last_err or RuntimeError("OpenRouter call failed")
 
@@ -547,7 +547,7 @@ def theme_insight(theme_id: int, n: int = 8, force: bool = False):
     # Cache
     cache = STATE.get("insight_cache", {})
     cached = cache.get(int(theme_id))
-    now = time.time()
+    now = time_module.time()
     if cached and not force and (now - cached["ts"] < INSIGHT_TTL_SECONDS):
         payload = cached["payload"]
         payload["disclaimer"] = "AI-assisted insight. Final decisions require human review."
