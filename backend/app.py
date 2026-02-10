@@ -13,6 +13,7 @@ import json
 import re
 import requests
 import copy
+from typing import Any, Dict, Tuple
 import time as time_module
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -27,6 +28,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
 
 # In-memory store (MVP). Resets when server restarts.
 DEMO_STATE = None
@@ -38,7 +41,8 @@ STATE = {
     "tfidf_matrix": None,
     "kmeans": None,
     "theme_labels": None,
-    "insight_cache": {}
+    "insight_cache": {},
+    "rate_limit": {"ts": 0.0, "retry_after": 0}
 }
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
@@ -226,61 +230,29 @@ def _extract_json_block(s: str) -> str:
     return s
 
 
-def generate_insight_from_evidence_openrouter(evidence_texts: list[str]) -> dict:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set")
+def build_insight_prompt(evidence_texts: list[str]) -> str:
+    numbered = "\n".join([f"{i}. {t}" for i, t in enumerate(evidence_texts)])
+    return f"""
+You are assisting a product manager reviewing user/internal feedback.
 
-    prompt = f"""
-You are assisting a product manager.
-
-STRICT RULES:
-- Do NOT invent features, dates, campaigns, or UI elements not explicitly mentioned in evidence.
-- Output ONLY JSON. No markdown. No extra text.
-- If evidence spans multiple unrelated requests, choose the single most common/central problem and ignore the rest.
+Rules:
+- Use ONLY the evidence. Do not invent features, dates, campaigns, UI elements, or metrics not implied by evidence.
+- Choose ONE core problem (the most central / frequent).
+- Output MUST be valid JSON ONLY. No markdown. No extra text.
 
 EVIDENCE:
-{evidence_texts}
+{numbered}
 
-Return ONLY valid JSON with exactly these keys:
-title: string (8-12 words, no dates/holidays)
-summary: string (2-3 sentences, must cite what users said)
-recommended_action: string (1-3 actions, each must be directly supported by evidence)
-success_metric: string (must be a measurable metric; if unclear, propose a reasonable proxy metric tied to the evidence, e.g., time-to-complete-task, support tickets, feature adoption)
-risks: string (must list 2-3 realistic risks: misclassification, overfitting to internal feedback, UX regression, measurement noise)
-evidence_refs: array of integers (indices of evidence items used, 0-based)
-"""
-
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "model": "openai/gpt-oss-120b:free",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        # disable advanced reasoning if you want faster responses
-        "reasoning": {"enabled": False}
-    }
-
-    last_err = None
-    for attempt in range(2):
-        try:
-            resp = requests.post(url, headers=headers, data=json.dumps(body), timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            # OpenRouter shape: choices[0].message.content (string)
-            msg = data.get("choices", [{}])[0].get("message", {})
-            text = msg.get("content", "") if isinstance(msg, dict) else ""
-            text = (text or "").strip()
-            json_block = _extract_json_block(text)
-            return json.loads(json_block)
-        except Exception as e:
-            last_err = e
-            time.sleep(0.8)
-    raise last_err
+Return JSON with EXACT keys:
+{{
+  "title": "8-12 words",
+  "summary": "2-3 sentences grounded in evidence",
+  "recommended_action": "1-3 concrete actions supported by evidence",
+  "success_metric": "single measurable metric (use a proxy if needed)",
+  "risks": "2-3 risks (e.g., UX regression, overfitting, measurement noise)",
+  "evidence_refs": [0,1]
+}}
+""".strip()
 
     
 @app.get("/health")
@@ -312,7 +284,71 @@ def prepare_demo_state():
     except Exception as e:
         DEMO_STATE = None
         print(f"[startup] Failed to prepare demo dataset: {e}")
-    
+
+def call_openrouter_json(prompt: str) -> Tuple[dict, dict]:
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
+
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        # Optional but recommended by OpenRouter for routing/analytics:
+        # "HTTP-Referer": "https://feedback-insightful.lovable.app",
+        # "X-Title": "Feedback Prioritization Dashboard",
+    }
+
+    body = {
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
+        "max_tokens": 450,
+        "response_format": {"type": "json_object"}  # if supported by routed provider
+    }
+
+    last_err = None
+    for attempt in range(4):
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=30)
+            meta = {"status": resp.status_code, "headers": dict(resp.headers)}
+
+            # Rate limit
+            if resp.status_code == 429:
+                retry_after = 5
+                try:
+                    retry_after = int(resp.headers.get("Retry-After", "5"))
+                except Exception:
+                    pass
+                STATE["rate_limit"] = {"ts": time.time(), "retry_after": retry_after}
+                time.sleep(min(retry_after, 8))
+                last_err = RuntimeError("429 rate limited")
+                continue
+
+            # Transient server errors
+            if resp.status_code in (500, 502, 503, 504):
+                time.sleep(1.5 * (attempt + 1))
+                last_err = RuntimeError(f"{resp.status_code} transient")
+                continue
+
+            resp.raise_for_status()
+            data = resp.json()
+
+            content = data["choices"][0]["message"].get("content", "").strip()
+            # content must be JSON
+            parsed = json.loads(content)
+            return parsed, meta
+
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))
+        except json.JSONDecodeError as e:
+            # Provider ignored json mode; retry once with stronger instruction
+            last_err = e
+            body["messages"][0]["content"] = prompt + "\n\nRETURN JSON ONLY. NO OTHER TEXT."
+            time.sleep(1.0)
+
+    raise last_err or RuntimeError("OpenRouter call failed")
+
 
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
@@ -485,92 +521,73 @@ def theme_detail(theme_id: int, n: int = 10):
         "examples": examples,
     }
 
-@app.get("/themes/{theme_id}/insight")
-def theme_insight(theme_id: int, n: int = 6):
-    if STATE["df"] is None:
-        raise HTTPException(status_code=400, detail="No data available. Upload first.")
+INSIGHT_TTL_SECONDS = 60 * 30  # 30 minutes
 
-    # Return cached insight if available
-    cached = STATE.get("insight_cache", {}).get(int(theme_id))
-    if cached:
-        return {
-            "theme_id": int(theme_id),
-            "confidence": cached["confidence"],
-            "insight": cached["insight"],
-            "evidence": cached["evidence"],
-            "disclaimer": "AI-assisted insight. Final decisions require human review."
-        }
+@app.get("/themes/{theme_id}/insight")
+def theme_insight(theme_id: int, n: int = 8, force: bool = False):
+    if STATE["df"] is None:
+        raise HTTPException(status_code=400, detail="No data available. Load demo first.")
 
     df = STATE["df"]
     subset = df[df["theme_id"] == theme_id].copy()
     if subset.empty:
         raise HTTPException(status_code=404, detail="Theme not found")
 
-    # Confidence gate
-    if len(subset) < 5:
-        evidence = subset.head(min(n, len(subset)))["text"].tolist()
-        return {
-            "theme_id": int(theme_id),
-            "confidence": "low",
-            "insight": None,
-            "message": "insufficient evidence",
-            "evidence": evidence,
-            "disclaimer": "AI-assisted insight. Final decisions require human review."
-        }
+    # Confidence gate (still allow AI, but label it)
+    confidence = "low" if len(subset) < 10 else "medium" if len(subset) < 20 else "high"
 
     # Evidence narrowing: dominant product_area
-    subset = subset.dropna(subset=["product_area"])
-    if subset.empty:
-        raise HTTPException(
-            status_code=500,
-            detail="Theme has no valid product_area values for evidence selection"
-        )
-
     top_area = subset["product_area"].value_counts().idxmax()
     subset_for_llm = subset[subset["product_area"] == top_area].copy()
 
     evidence_texts = subset_for_llm.head(n)["text"].tolist()
+    if not evidence_texts:
+        evidence_texts = subset.head(n)["text"].tolist()
 
-    # Confidence level based on evidence strength
-    if len(subset) >= 20:
-        confidence = "high"
-    elif len(subset) >= 10:
-        confidence = "medium"
-    else:
-        confidence = "low"
+    # Cache
+    cache = STATE.get("insight_cache", {})
+    cached = cache.get(int(theme_id))
+    now = time.time()
+    if cached and not force and (now - cached["ts"] < INSIGHT_TTL_SECONDS):
+        payload = cached["payload"]
+        payload["disclaimer"] = "AI-assisted insight. Final decisions require human review."
+        return payload
 
-    # Generate insight using OpenRouter, with fallback
+    prompt = build_insight_prompt(evidence_texts)
+
     try:
-        insight = generate_insight_from_evidence_openrouter(evidence_texts)
-    except Exception:
-        # Deterministic fallback so UI never breaks
-        label = (STATE.get("theme_labels") or {}).get(
-            int(theme_id), f"theme_{int(theme_id)}"
-        )
-        insight = {
-            "title": f"Theme: {label[:60]}",
-            "summary": "AI insight unavailable due to API limits. Review the evidence below to assess the core problem.",
-            "recommended_action": "Review the evidence, confirm the main issue, and define a fix or experiment.",
-            "success_metric": "Reduce related support tickets and increase usage of the affected feature.",
-            "risks": "Misclassification of feedback; UX regression; measurement noise.",
-            "evidence_refs": list(range(len(evidence_texts)))
+        insight_json, meta = call_openrouter_json(prompt)
+
+        payload = {
+            "theme_id": int(theme_id),
+            "confidence": confidence,
+            "insight": insight_json,
+            "evidence": evidence_texts,
+            "disclaimer": "AI-assisted insight. Final decisions require human review.",
+            "llm_meta": {"status": meta.get("status")}  # keep minimal
         }
 
-    # Cache result
-    STATE.setdefault("insight_cache", {})[int(theme_id)] = {
-        "ts": time_module.time(),
-        "confidence": confidence,
-        "insight": insight,
-        "evidence": evidence_texts
-    }
+        cache[int(theme_id)] = {"ts": now, "payload": payload}
+        STATE["insight_cache"] = cache
+        return payload
 
-    return {
-        "theme_id": int(theme_id),
-        "confidence": confidence,
-        "insight": insight,
-        "evidence": evidence_texts,
-        "disclaimer": "AI-assisted insight. Final decisions require human review."
-    }
+    except Exception as e:
+        # If we *actually* hit rate limit recently, return a specific flag the UI can display.
+        rl = STATE.get("rate_limit", {})
+        recent_rl = rl and (now - rl.get("ts", 0) < 120)
+
+        payload = {
+            "theme_id": int(theme_id),
+            "confidence": confidence,
+            "insight": None,
+            "evidence": evidence_texts,
+            "disclaimer": "AI-assisted insight. Final decisions require human review.",
+            "error_type": "rate_limited" if recent_rl else "llm_failed",
+            "message": "AI insight unavailable due to API limits." if recent_rl else "AI insight unavailable (temporary error)."
+        }
+
+        # Do NOT cache failures. That’s why your UI got “stuck.”
+        raise HTTPException(status_code=503, detail=payload)
 
 @app.post("/load_demo")
 def load_demo(request: Request):
