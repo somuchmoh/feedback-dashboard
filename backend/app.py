@@ -30,6 +30,8 @@ app.add_middleware(
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
 
 # In-memory store (MVP). Resets when server restarts.
 DEMO_STATE = None
