@@ -524,7 +524,7 @@ def theme_detail(theme_id: int, n: int = 10):
 INSIGHT_TTL_SECONDS = 60 * 30  # 30 minutes
 
 @app.get("/themes/{theme_id}/insight")
-def theme_insight(theme_id: int, n: int = 8, force: bool = False):
+def theme_insight(theme_id: int, n: int = 10, force: bool = False):
     if STATE["df"] is None:
         raise HTTPException(status_code=400, detail="No data available. Load demo first.")
 
@@ -533,62 +533,60 @@ def theme_insight(theme_id: int, n: int = 8, force: bool = False):
     if subset.empty:
         raise HTTPException(status_code=404, detail="Theme not found")
 
-    # Confidence gate (still allow AI, but label it)
-    confidence = "low" if len(subset) < 10 else "medium" if len(subset) < 20 else "high"
+    # Evidence list
+    evidence_texts = subset.head(min(n, len(subset)))["text"].tolist()
 
-    # Evidence narrowing: dominant product_area
-    top_area = subset["product_area"].value_counts().idxmax()
-    subset_for_llm = subset[subset["product_area"] == top_area].copy()
-
-    evidence_texts = subset_for_llm.head(n)["text"].tolist()
-    if not evidence_texts:
-        evidence_texts = subset.head(n)["text"].tolist()
-
-    # Cache
-    cache = STATE.get("insight_cache", {})
-    cached = cache.get(int(theme_id))
-    now = time_module.time()
-    if cached and not force and (now - cached["ts"] < INSIGHT_TTL_SECONDS):
-        payload = cached["payload"]
-        payload["disclaimer"] = "AI-assisted insight. Final decisions require human review."
-        return payload
-
-    prompt = build_insight_prompt(evidence_texts)
-
-    try:
-        insight_json, meta = call_openrouter_json(prompt)
-
-        payload = {
+    # --- Confidence gate (DO NOT CALL LLM) ---
+    if len(subset) < 5:
+        return {
             "theme_id": int(theme_id),
-            "confidence": confidence,
-            "insight": insight_json,
-            "evidence": evidence_texts,
-            "disclaimer": "AI-assisted insight. Final decisions require human review.",
-            "llm_meta": {"status": meta.get("status")}  # keep minimal
-        }
-
-        cache[int(theme_id)] = {"ts": now, "payload": payload}
-        STATE["insight_cache"] = cache
-        return payload
-
-    except Exception as e:
-        # If we *actually* hit rate limit recently, return a specific flag the UI can display.
-        rl = STATE.get("rate_limit", {})
-        recent_rl = rl and (now - rl.get("ts", 0) < 120)
-
-        payload = {
-            "theme_id": int(theme_id),
-            "confidence": confidence,
+            "confidence": "low",
             "insight": None,
             "evidence": evidence_texts,
             "disclaimer": "AI-assisted insight. Final decisions require human review.",
-            "error_type": "rate_limited" if recent_rl else "llm_failed",
-            "message": "AI insight unavailable due to API limits." if recent_rl else "AI insight unavailable (temporary error)."
+            "message": "Insufficient evidence to generate a reliable AI insight."
         }
 
-        # Do NOT cache failures. That’s why your UI got “stuck.”
-        raise HTTPException(status_code=503, detail=payload)
+    # --- Cache ---
+    if "insight_cache" not in STATE:
+        STATE["insight_cache"] = {}
+    cache_key = f"{int(theme_id)}:{len(subset)}:{n}"
+    if (not force) and cache_key in STATE["insight_cache"]:
+        return STATE["insight_cache"][cache_key]
 
+    # --- Optional: narrow to dominant product_area to reduce tokens ---
+    top_area = subset["product_area"].value_counts().idxmax()
+    subset_for_llm = subset[subset["product_area"] == top_area].copy()
+    evidence_texts = subset_for_llm.head(min(n, len(subset_for_llm)))["text"].tolist()
+
+    # --- LLM call with safe fallback (NO 503) ---
+    try:
+        insight = generate_insight_from_evidence_openrouter(evidence_texts)
+        payload = {
+            "theme_id": int(theme_id),
+            "confidence": "high" if len(subset) >= 20 else "medium",
+            "insight": insight,
+            "evidence": evidence_texts,
+            "disclaimer": "AI-assisted insight. Final decisions require human review."
+        }
+        STATE["insight_cache"][cache_key] = payload
+        return payload
+
+    except Exception as e:
+        print("INSIGHT ERROR TRACEBACK:")
+        print(traceback.format_exc())
+        # Return 200 with a graceful fallback so UI still works
+        return {
+            "theme_id": int(theme_id),
+            "confidence": "medium" if len(subset) >= 10 else "low",
+            "insight": None,
+            "evidence": evidence_texts,
+            "disclaimer": "AI-assisted insight. Final decisions require human review.",
+            "error_type": "llm_failed",
+            "message": "AI insight unavailable (temporary error)."
+        }
+
+        
 @app.post("/load_demo")
 def load_demo(request: Request):
     global DEMO_STATE
