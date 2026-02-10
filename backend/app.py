@@ -215,30 +215,43 @@ def select_evidence(df, theme_id, n=10):
         ["id", "text", "source", "segment", "product_area", "created_on"]
     ].to_dict(orient="records")
 
-def _extract_json_block(s: str) -> str:
-    s = (s or "").strip()
-    if "```" in s:
-        parts = s.split("```")
-        # choose the largest inner block
-        s = max(parts, key=len).strip()
-        s = re.sub(r"^json\s*", "", s.strip(), flags=re.IGNORECASE)
-    # extract first {...} block
-    start = s.find("{")
-    end = s.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return s[start:end+1]
-    return s
+def _extract_json_object(text: str) -> dict:
+    if not text:
+        raise ValueError("Empty model output")
+
+    # Remove markdown fences if present
+    t = text.strip()
+    if "```" in t:
+        parts = t.split("```")
+        t = max(parts, key=len).strip()
+        t = re.sub(r"^json\s*", "", t, flags=re.IGNORECASE).strip()
+
+    # Extract outermost JSON object
+    start = t.find("{")
+    end = t.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(f"No JSON object found. Got: {t[:200]}")
+
+    obj = t[start:end+1]
+    return json.loads(obj)
 
 
-def build_insight_prompt(evidence_texts: list[str]) -> str:
+def _looks_like_prompt_echo(text: str) -> bool:
+    t = (text or "").lower()
+    return ("evidence:" in t and "return json" in t) or ("you are assisting a product manager" in t)
+
+
+def build_insight_prompt(evidence_texts: list[str]) -> dict:
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
+
     numbered = "\n".join([f"{i}. {t}" for i, t in enumerate(evidence_texts)])
-    return f"""
-You are assisting a product manager reviewing user/internal feedback.
 
-Rules:
-- Use ONLY the evidence. Do not invent features, dates, campaigns, UI elements, or metrics not implied by evidence.
-- Choose ONE core problem (the most central / frequent).
-- Output MUST be valid JSON ONLY. No markdown. No extra text.
+    prompt = f"""
+Generate a product insight from evidence.
+
+Output MUST be valid JSON ONLY. No markdown. No extra text.
 
 EVIDENCE:
 {numbered}
@@ -247,55 +260,17 @@ Return JSON with EXACT keys:
 {{
   "title": "8-12 words",
   "summary": "2-3 sentences grounded in evidence",
-  "recommended_action": "1-3 concrete actions supported by evidence",
-  "success_metric": "single measurable metric (use a proxy if needed)",
-  "risks": "2-3 risks (e.g., UX regression, overfitting, measurement noise)",
+  "recommended_action": "1-3 actions supported by evidence",
+  "success_metric": "one measurable metric",
+  "risks": "2-3 realistic risks",
   "evidence_refs": [0,1]
 }}
 """.strip()
 
-    
-@app.get("/health")
-def health():
-    return {"status": "ok", "rows_loaded": 0 if STATE["df"] is None else int(len(STATE["df"]))}
-
-@app.on_event("startup")
-def prepare_demo_state():
-    global DEMO_STATE
-    demo_path = Path(__file__).parent / "data" / "demo.csv"
-
-    if not demo_path.exists():
-        DEMO_STATE = None
-        print("[startup] demo.csv not found")
-        return
-
-    try:
-        df = pd.read_csv(
-            demo_path,
-            sep=",",                  # IMPORTANT: demo.csv is comma-separated
-            engine="python",
-            quotechar='"',
-            escapechar="\\",
-            on_bad_lines="skip",      # do not crash on malformed rows
-        )
-        df_clean = clean_df(df)
-        DEMO_STATE = build_state_from_df(df_clean, k=10)
-        print(f"[startup] Demo dataset prepared with {len(df_clean)} rows")
-    except Exception as e:
-        DEMO_STATE = None
-        print(f"[startup] Failed to prepare demo dataset: {e}")
-
-def call_openrouter_json(prompt: str) -> Tuple[dict, dict]:
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY is not set")
-
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        # Optional but recommended by OpenRouter for routing/analytics:
-        # "HTTP-Referer": "https://feedback-insightful.lovable.app",
-        # "X-Title": "Feedback Prioritization Dashboard",
     }
 
     body = {
@@ -303,51 +278,47 @@ def call_openrouter_json(prompt: str) -> Tuple[dict, dict]:
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
         "max_tokens": 450,
-        "response_format": {"type": "json_object"}  # if supported by routed provider
+        # Some providers respect this; if ignored, JSON extraction still works.
+        "response_format": {"type": "json_object"},
     }
 
     last_err = None
-    for attempt in range(4):
+
+    for attempt in range(3):
         try:
             resp = requests.post(url, headers=headers, json=body, timeout=30)
-            meta = {"status": resp.status_code, "headers": dict(resp.headers)}
 
-            # Rate limit
+            # Handle rate limit gently
             if resp.status_code == 429:
-                retry_after = 5
-                try:
-                    retry_after = int(resp.headers.get("Retry-After", "5"))
-                except Exception:
-                    pass
-                STATE["rate_limit"] = {"ts": time_module.time(), "retry_after": retry_after}
-                time_module.sleep(min(retry_after, 8))
-                last_err = RuntimeError("429 rate limited")
-                continue
-
-            # Transient server errors
-            if resp.status_code in (500, 502, 503, 504):
-                time_module.sleep(1.5 * (attempt + 1))
-                last_err = RuntimeError(f"{resp.status_code} transient")
+                time.sleep(2 + attempt)
+                last_err = RuntimeError("Rate limited (429)")
                 continue
 
             resp.raise_for_status()
             data = resp.json()
-
             content = data["choices"][0]["message"].get("content", "").strip()
-            # content must be JSON
-            parsed = json.loads(content)
-            return parsed, meta
 
-        except (requests.Timeout, requests.ConnectionError) as e:
-            last_err = e
-            time_module.sleep(1.5 * (attempt + 1))
-        except json.JSONDecodeError as e:
-            # Provider ignored json mode; retry once with stronger instruction
-            last_err = e
-            body["messages"][0]["content"] = prompt + "\n\nRETURN JSON ONLY. NO OTHER TEXT."
-            time_module.sleep(1.0)
+            # If model echoed prompt, tighten and retry
+            if _looks_like_prompt_echo(content):
+                body["messages"][0]["content"] = prompt + "\n\nDO NOT REPEAT THE PROMPT. OUTPUT JSON ONLY."
+                time.sleep(0.5)
+                last_err = ValueError("Prompt echo")
+                continue
 
-    raise last_err or RuntimeError("OpenRouter call failed")
+            insight = _extract_json_object(content)
+
+            # Validate required keys
+            required = {"title", "summary", "recommended_action", "success_metric", "risks", "evidence_refs"}
+            if not required.issubset(set(insight.keys())):
+                raise ValueError(f"Missing keys: {required - set(insight.keys())}")
+
+            return insight
+
+        except Exception as e:
+            last_err = e
+            time.sleep(1 + attempt)
+
+    raise last_err or RuntimeError("OpenRouter insight generation failed")
 
 
 @app.post("/upload")
@@ -579,7 +550,7 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
         return {
             "theme_id": int(theme_id),
             "confidence": "medium" if len(subset) >= 10 else "low",
-            "insight": None,
+            "insight": insight,
             "evidence": evidence_texts,
             "disclaimer": "AI-assisted insight. Final decisions require human review.",
             "error_type": "llm_failed",
