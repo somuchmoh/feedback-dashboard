@@ -8,9 +8,7 @@ from pathlib import Path
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import MiniBatchKMeans
-import os
-import json
-import re
+import os, json, re
 import requests
 import copy
 from typing import Any, Dict, Tuple
@@ -28,7 +26,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -221,34 +218,41 @@ def _extract_json_object(text: str) -> dict:
     if not text:
         raise ValueError("Empty model output")
 
-    # Remove markdown fences if present
     t = text.strip()
+
+    # Strip markdown fences if present
     if "```" in t:
         parts = t.split("```")
         t = max(parts, key=len).strip()
         t = re.sub(r"^json\s*", "", t, flags=re.IGNORECASE).strip()
 
-    # Extract outermost JSON object
     start = t.find("{")
     end = t.rfind("}")
     if start == -1 or end == -1 or end <= start:
-        raise ValueError(f"No JSON object found. Got: {t[:200]}")
+        raise ValueError(f"No JSON object found. Got: {t[:250]}")
 
-    obj = t[start:end+1]
-    return json.loads(obj)
+    return json.loads(t[start : end + 1])
 
 
 def _looks_like_prompt_echo(text: str) -> bool:
     t = (text or "").lower()
-    return ("evidence:" in t and "return json" in t) or ("you are assisting a product manager" in t)
+    return (
+        "return json with exact keys" in t
+        or ("evidence:" in t and "output must be valid json" in t)
+        or "generate a product insight from evidence" in t
+    )
 
 
 def build_insight_prompt(evidence_texts: list[str]) -> str:
     numbered = "\n".join([f"{i}. {t}" for i, t in enumerate(evidence_texts)])
     return f"""
-Generate a product insight from evidence.
+You are assisting a product manager reviewing feedback.
 
-Output MUST be valid JSON ONLY. No markdown. No extra text.
+Hard rules:
+- Use ONLY the evidence. Do not invent features, dates, campaigns, UI elements, or facts not in evidence.
+- Pick ONE core problem (most central/frequent).
+- Output MUST be JSON ONLY (no markdown, no prose outside JSON).
+- If evidence is too weak, still output JSON but set summary/recommended_action conservatively.
 
 EVIDENCE:
 {numbered}
@@ -257,9 +261,9 @@ Return JSON with EXACT keys:
 {{
   "title": "8-12 words",
   "summary": "2-3 sentences grounded in evidence",
-  "recommended_action": "1-3 actions supported by evidence",
-  "success_metric": "one measurable metric",
-  "risks": "2-3 realistic risks",
+  "recommended_action": "1-3 concrete actions supported by evidence",
+  "success_metric": "one measurable metric (proxy allowed)",
+  "risks": "2-3 realistic risks (UX regression, overfitting, measurement noise, misclassification)",
   "evidence_refs": [0,1]
 }}
 """.strip()
@@ -274,31 +278,67 @@ def generate_insight_from_evidence_openrouter(evidence_texts: list[str]) -> dict
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        # These two are recommended by OpenRouter; not required, but helps routing.
+        "Accept": "application/json",
+        # optional but useful for OpenRouter routing/analytics
         "HTTP-Referer": "https://feedback-insightful.lovable.app",
         "X-Title": "Feedback Insight Dashboard",
     }
 
-    payload = {
-        "model": OPENROUTER_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
-        "max_tokens": 500,
-    }
+    def _call(temp: float) -> str:
+        payload = {
+            "model": OPENROUTER_MODEL,
+            "messages": [
+                {"role": "system", "content": "Return ONLY valid JSON. No markdown. No extra text."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": temp,
+            "max_tokens": 500,
+        }
 
-    resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=45)
-    resp.raise_for_status()
+        resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
 
-    data = resp.json()
-    content = data["choices"][0]["message"].get("content", "").strip()
+        # Make OpenRouter errors actionable
+        if resp.status_code == 404:
+            try:
+                j = resp.json()
+            except Exception:
+                j = {"raw": resp.text[:400]}
 
-    # Parse JSON object from content
-    start = content.find("{")
-    end = content.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError(f"No JSON found in model output: {content[:200]}")
+            msg = ""
+            if isinstance(j, dict):
+                msg = (j.get("error") or {}).get("message") or j.get("message") or str(j)
 
-    return json.loads(content[start:end+1])
+            # Common OpenRouter free-tier/privacy failure mode:
+            if "data policy" in msg.lower() or "privacy" in msg.lower() or "no endpoints found" in msg.lower():
+                raise RuntimeError(
+                    "OpenRouter returned 404 due to privacy/data-policy settings for free providers. "
+                    "Fix: openrouter.ai/settings/privacy and enable free endpoints that may train/publish prompts."
+                )
+            raise RuntimeError(f"OpenRouter 404: {msg}")
+
+        if resp.status_code == 429:
+            raise RuntimeError("OpenRouter rate-limited this request (429). Retry later.")
+
+        resp.raise_for_status()
+
+        data = resp.json()
+        return (data["choices"][0]["message"].get("content") or "").strip()
+
+    # Attempt 1
+    content = _call(temp=0.2)
+    if _looks_like_prompt_echo(content):
+        # Attempt 2: even stricter
+        content = _call(temp=0.0)
+
+    obj = _extract_json_object(content)
+
+    # Minimal schema guard (prevents Lovable UI from breaking)
+    required = {"title", "summary", "recommended_action", "success_metric", "risks", "evidence_refs"}
+    missing = required - set(obj.keys())
+    if missing:
+        raise ValueError(f"Model JSON missing keys: {sorted(missing)}")
+
+    return obj
 
 
 @app.post("/upload")
@@ -476,7 +516,7 @@ INSIGHT_TTL_SECONDS = 60 * 30  # 30 minutes
 
 @app.get("/themes/{theme_id}/insight")
 def theme_insight(theme_id: int, n: int = 10, force: bool = False):
-    if STATE["df"] is None:
+    if STATE.get("df") is None:
         raise HTTPException(status_code=400, detail="No data available. Load demo first.")
 
     df = STATE["df"]
@@ -484,35 +524,39 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
     if subset.empty:
         raise HTTPException(status_code=404, detail="Theme not found")
 
-    # Evidence list
-    evidence_texts = subset.head(min(n, len(subset)))["text"].tolist()
-
-    # --- Confidence gate (DO NOT CALL LLM) ---
+    # Confidence gate (no LLM)
+    evidence_texts_full = subset.head(min(n, len(subset)))["text"].tolist()
     if len(subset) < 5:
         return {
             "theme_id": int(theme_id),
             "confidence": "low",
             "insight": None,
-            "evidence": evidence_texts,
+            "evidence": evidence_texts_full,
             "disclaimer": "AI-assisted insight. Final decisions require human review.",
             "message": "Insufficient evidence to generate a reliable AI insight."
         }
 
-    # --- Cache ---
+    # Cache init
     if "insight_cache" not in STATE:
         STATE["insight_cache"] = {}
-    cache_key = f"{int(theme_id)}:{len(subset)}:{n}"
-    if (not force) and cache_key in STATE["insight_cache"]:
-        return STATE["insight_cache"][cache_key]
 
-    # --- Optional: narrow to dominant product_area to reduce tokens ---
+    cache_key = f"{int(theme_id)}:{len(subset)}:{n}"
+    cached = STATE["insight_cache"].get(cache_key)
+    if (not force) and cached:
+        # TTL check
+        ts = cached.get("_ts", 0.0)
+        if (time_module.time() - ts) < INSIGHT_TTL_SECONDS:
+            cached.pop("_ts", None)
+            return cached
+
+    # Token control: narrow to dominant product_area
     top_area = subset["product_area"].value_counts().idxmax()
     subset_for_llm = subset[subset["product_area"] == top_area].copy()
     evidence_texts = subset_for_llm.head(min(n, len(subset_for_llm)))["text"].tolist()
 
-    # --- LLM call with safe fallback (NO 503) ---
     try:
         insight = generate_insight_from_evidence_openrouter(evidence_texts)
+
         payload = {
             "theme_id": int(theme_id),
             "confidence": "high" if len(subset) >= 20 else "medium",
@@ -520,13 +564,13 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
             "evidence": evidence_texts,
             "disclaimer": "AI-assisted insight. Final decisions require human review."
         }
-        STATE["insight_cache"][cache_key] = payload
+
+        STATE["insight_cache"][cache_key] = {"_ts": time_module.time(), **payload}
         return payload
 
-    except Exception as e:
+    except Exception:
         print("INSIGHT ERROR TRACEBACK:")
         print(traceback.format_exc())
-        # Return 200 with a graceful fallback so UI still works
         return {
             "theme_id": int(theme_id),
             "confidence": "medium" if len(subset) >= 10 else "low",
@@ -536,7 +580,6 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
             "error_type": "llm_failed",
             "message": "AI insight unavailable (temporary error)."
         }
-
         
 @app.post("/load_demo")
 def load_demo(request: Request):
