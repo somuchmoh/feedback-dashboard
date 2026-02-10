@@ -103,7 +103,6 @@ def build_state_from_df(df_clean: pd.DataFrame, k: int = 10) -> dict:
         "nn_model": nn_model,
         "kmeans": km,
         "theme_labels": theme_labels,
-        "insight_cache": {},
     }
 
 
@@ -415,7 +414,65 @@ def sanitize_success_metric(metric: str) -> str:
 
     return m
 
+@app.post("/load_demo")
+def load_demo(k: int=10):
+    global DEMO_STATE
 
+    try:
+        if DEMO_STATE is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Demo dataset not available on server.")
+
+        STATE["df"] =  DEMO_STATE["df"].copy()
+        STATE["vectorizer"] = DEMO_STATE["vectorizer"]
+        STATE["tfidf_matrix"] = DEMO_STATE["tfidf_matrix"]
+        STATE["nn_model"] = DEMO_STATE["nn_model"]
+        STATE["kmeans"] = DEMO_STATE["kmeans"]
+        STATE["theme_labels"] = DEMO_STATE["theme_labels"]
+        STATE["insight_cache"] = {}
+
+        return {
+            "message": "Demo loaded",
+            "rows_loaded": int(len(STATE["df"])),
+            "num_themes": int(STATE["df"]["theme_id"].nunique()),
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        print("LOAD_DEMO ERROR TRACEBACK:")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Load demo failed. Check Railway logs.")
+
+@app.on_event("startup")
+def prepare_demo_state():
+    global DEMO_STATE
+    try:
+        demo_path = Path(__file__).parent / "data" / "demo.csv"
+        if not demo_path.exists():
+            print("[startup] demo.csv NOT FOUND:", demo_path)
+            DEMO_STATE = None
+            return 
+
+        df = pd.read_csv(
+            demo_path,
+            sep=",",
+            engine="python",
+            quotechar='"',
+            escapechar="\\",
+            on_bad_lines="skip",
+        )
+
+        df_clean = clean_df(df)
+        DEMO_STATE = build_state_from_df(df_clean, k=10)
+
+        print(f"[startup] Demo prepared with {len(df_clean)} rows")
+
+    except Exception:
+        DEMO_STATE = None 
+        print("[startup] Demo prepare failed:")
+        print(traceback.format.exc())
+    
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
     """
@@ -660,24 +717,3 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
             "error_type": "llm_failed",
             "message": "AI insight unavailable (temporary error)."
         }
-
-@app.post("/load_demo")
-def load_demo(request: Request):
-    global DEMO_STATE
-
-    rate_limit(request.client.host, limit=5, window=60)
-
-    if DEMO_STATE is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Demo dataset not available on server."
-        )
-
-    STATE.clear()
-    STATE.update(copy.deepcopy(DEMO_STATE))
-
-    return {
-        "message": "Demo loaded",
-        "rows_loaded": int(len(STATE["df"])) if STATE["df"] is not None else 0,
-        "num_themes": int(STATE["df"]["theme_id"].nunique()) if STATE["df"] is not None else 0,
-    }
