@@ -241,14 +241,9 @@ def _looks_like_prompt_echo(text: str) -> bool:
     return ("evidence:" in t and "return json" in t) or ("you are assisting a product manager" in t)
 
 
-def build_insight_prompt(evidence_texts: list[str]) -> dict:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set")
-
+def build_insight_prompt(evidence_texts: list[str]) -> str:
     numbered = "\n".join([f"{i}. {t}" for i, t in enumerate(evidence_texts)])
-
-    prompt = f"""
+    return f"""
 Generate a product insight from evidence.
 
 Output MUST be valid JSON ONLY. No markdown. No extra text.
@@ -267,58 +262,41 @@ Return JSON with EXACT keys:
 }}
 """.strip()
 
-    url = "https://openrouter.ai/api/v1/chat/completions"
+def generate_insight_from_evidence_openrouter(evidence_texts: list[str]) -> dict:
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
+
+    prompt = build_insight_prompt(evidence_texts)
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        # These two are recommended by OpenRouter; not required, but helps routing.
+        "HTTP-Referer": "https://feedback-insightful.lovable.app",
+        "X-Title": "Feedback Insight Dashboard",
     }
 
-    body = {
+    payload = {
         "model": OPENROUTER_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
-        "max_tokens": 450,
-        # Some providers respect this; if ignored, JSON extraction still works.
-        "response_format": {"type": "json_object"},
+        "max_tokens": 500,
     }
 
-    last_err = None
+    resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=45)
+    resp.raise_for_status()
 
-    for attempt in range(3):
-        try:
-            resp = requests.post(url, headers=headers, json=body, timeout=30)
+    data = resp.json()
+    content = data["choices"][0]["message"].get("content", "").strip()
 
-            # Handle rate limit gently
-            if resp.status_code == 429:
-                time.sleep(2 + attempt)
-                last_err = RuntimeError("Rate limited (429)")
-                continue
+    # Parse JSON object from content
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError(f"No JSON found in model output: {content[:200]}")
 
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"].get("content", "").strip()
-
-            # If model echoed prompt, tighten and retry
-            if _looks_like_prompt_echo(content):
-                body["messages"][0]["content"] = prompt + "\n\nDO NOT REPEAT THE PROMPT. OUTPUT JSON ONLY."
-                time.sleep(0.5)
-                last_err = ValueError("Prompt echo")
-                continue
-
-            insight = _extract_json_object(content)
-
-            # Validate required keys
-            required = {"title", "summary", "recommended_action", "success_metric", "risks", "evidence_refs"}
-            if not required.issubset(set(insight.keys())):
-                raise ValueError(f"Missing keys: {required - set(insight.keys())}")
-
-            return insight
-
-        except Exception as e:
-            last_err = e
-            time.sleep(1 + attempt)
-
-    raise last_err or RuntimeError("OpenRouter insight generation failed")
+    return json.loads(content[start:end+1])
 
 
 @app.post("/upload")
@@ -532,7 +510,7 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
 
     # --- LLM call with safe fallback (NO 503) ---
     try:
-        insight = build_insight_prompt(evidence_texts)
+        insight = generate_insight_from_evidence_openrouter(evidence_texts)
         payload = {
             "theme_id": int(theme_id),
             "confidence": "high" if len(subset) >= 20 else "medium",
