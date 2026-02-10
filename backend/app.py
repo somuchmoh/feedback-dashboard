@@ -220,18 +220,44 @@ def _extract_json_object(text: str) -> dict:
 
     t = text.strip()
 
-    # Strip markdown fences if present
+    # Strip markdown fences
     if "```" in t:
         parts = t.split("```")
         t = max(parts, key=len).strip()
         t = re.sub(r"^json\s*", "", t, flags=re.IGNORECASE).strip()
 
+    # Try strict parse first
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+
+    # Extract from first { to last }
     start = t.find("{")
     end = t.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError(f"No JSON object found. Got: {t[:250]}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(t[start:end+1])
 
-    return json.loads(t[start : end + 1])
+    # If truncated (starts with { but no closing }), try to auto-close safely
+    if start != -1 and end == -1:
+        candidate = t[start:]
+
+        # Add missing quote if it ends mid-string (rough but effective)
+        if candidate.count('"') % 2 == 1:
+            candidate += '"'
+
+        # Close braces based on balance
+        open_braces = candidate.count("{")
+        close_braces = candidate.count("}")
+        candidate += "}" * max(0, open_braces - close_braces)
+
+        # Remove trailing commas before brace
+        candidate = re.sub(r",\s*}", "}", candidate)
+
+        return json.loads(candidate)
+
+    raise ValueError(f"No JSON object found. Got: {t[:250]}")
+
 
 
 def _looks_like_prompt_echo(text: str) -> bool:
@@ -246,7 +272,7 @@ def _looks_like_prompt_echo(text: str) -> bool:
 def build_insight_prompt(evidence_texts: list[str]) -> str:
     numbered = "\n".join([f"{i}. {t}" for i, t in enumerate(evidence_texts)])
     return f"""
-You are assisting a product manager reviewing feedback.
+You are assisting a product manager reviewing feedback. Keep summary under 60 words. Keep recommended_action under 40 words total.
 
 Hard rules:
 - Use ONLY the evidence. Do not invent features, dates, campaigns, UI elements, or facts not in evidence.
@@ -292,7 +318,7 @@ def generate_insight_from_evidence_openrouter(evidence_texts: list[str]) -> dict
                 {"role": "user", "content": prompt},
             ],
             "temperature": temp,
-            "max_tokens": 500,
+            "max_tokens": 900,
         }
 
         resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
@@ -552,7 +578,7 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
     # Token control: narrow to dominant product_area
     top_area = subset["product_area"].value_counts().idxmax()
     subset_for_llm = subset[subset["product_area"] == top_area].copy()
-    evidence_texts = subset_for_llm.head(min(n, len(subset_for_llm)))["text"].tolist()
+    evidence_texts = subset_for_llm.head(min(8, len(subset_for_llm)))["text"].tolist()
 
     try:
         insight = generate_insight_from_evidence_openrouter(evidence_texts)
