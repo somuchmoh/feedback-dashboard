@@ -550,7 +550,7 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
         return {
             "theme_id": int(theme_id),
             "confidence": "medium" if len(subset) >= 10 else "low",
-            "insight": insight,
+            "insight": None,
             "evidence": evidence_texts,
             "disclaimer": "AI-assisted insight. Final decisions require human review.",
             "error_type": "llm_failed",
