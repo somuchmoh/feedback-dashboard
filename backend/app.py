@@ -168,6 +168,7 @@ def compute_trend(df):
         trends[int(theme_id)] = (recent - previous) / max(previous, 1)
 
     return trends
+    
 
 def score_themes(df):
     trends = compute_trend(df)
@@ -191,7 +192,7 @@ def score_themes(df):
         else:
             confidence = "high"
 
-
+        confidence = compute_confidence_from_group(g)
         theme_scores[int(theme_id)] = {
             "volume": volume,
             "negativity": round(float(negativity), 3),
@@ -207,6 +208,34 @@ def score_themes(df):
             v["priority_score_100"] = round((raw / max_priority) * 100, 1) if max_priority > 0 else 0.0
 
     return theme_scores
+
+def compute_confidence_from_group(g: pd.DataFrame) -> str:
+    volume = len(g)
+
+    # Base by volume
+    if volume >= 20:
+        base = "high"
+    elif volume >= 10:
+        base = "medium"
+    else:
+        base = "low"
+
+    # Evidence-quality checks (diversity)
+    source_diversity = g["source"].nunique() if "source" in g.columns else 1
+    area_diversity = g["product_area"].nunique() if "product_area" in g.columns else 1
+
+    narrow = (source_diversity <= 1) or (area_diversity <= 1)
+
+    if not narrow:
+        return base
+
+    # Downshift one level if narrow
+    if base == "high":
+        return "medium"
+    if base == "medium":
+        return "low"
+    return "low"
+
 
 def select_evidence(df, theme_id, n=10):
     subset = df[df["theme_id"] == theme_id]
@@ -365,6 +394,26 @@ def generate_insight_from_evidence_openrouter(evidence_texts: list[str]) -> dict
         raise ValueError(f"Model JSON missing keys: {sorted(missing)}")
 
     return obj
+
+
+def sanitize_success_metric(metric: str) -> str:
+    if not metric:
+        return "Reduce relevant support tickets and improve task completion time for the affected workflow."
+
+    m = metric.strip()
+
+    # If model invents a target like "30% within 3 months", remove it
+    has_percent = bool(re.search(r"\b\d+(\.\d+)?\s*%|\bpercent\b", m.lower()))
+    has_timeframe = bool(re.search(r"\bwithin\b|\bmonths?\b|\bweeks?\b|\bdays?\b|\bquarters?\b", m.lower()))
+    has_hard_target = has_percent or has_timeframe
+
+    if has_hard_target:
+        return (
+            "Reduce permission-related support tickets (weekly) and reduce time spent on permissions "
+            "during enterprise onboarding calls; track adoption of the updated permission audit view."
+        )
+
+    return m
 
 
 @app.post("/upload")
@@ -579,13 +628,18 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
     top_area = subset["product_area"].value_counts().idxmax()
     subset_for_llm = subset[subset["product_area"] == top_area].copy()
     evidence_texts = subset_for_llm.head(min(8, len(subset_for_llm)))["text"].tolist()
+    confidence = compute_confidence_from_group(subset)
 
     try:
         insight = generate_insight_from_evidence_openrouter(evidence_texts)
+        insight["success_metric"] = sanitize_success_metric(insight.get("success_metric", ""))
+        if not str(insight.get("risks", "")).strip():
+            insight["risks"] = "UX regression; overfitting to limited feedback; measurement noise."
+
 
         payload = {
             "theme_id": int(theme_id),
-            "confidence": "high" if len(subset) >= 20 else "medium",
+            "confidence": confidence,
             "insight": insight,
             "evidence": evidence_texts,
             "disclaimer": "AI-assisted insight. Final decisions require human review."
@@ -606,7 +660,7 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
             "error_type": "llm_failed",
             "message": "AI insight unavailable (temporary error)."
         }
-        
+
 @app.post("/load_demo")
 def load_demo(request: Request):
     global DEMO_STATE
