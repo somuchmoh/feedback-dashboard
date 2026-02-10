@@ -70,7 +70,7 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def rate_limit(ip: str, limit=5, window=60):
-    now = time_module()
+    now = time_module.time()
     RATE.setdefault(ip, [])
     RATE[ip] = [t for t in RATE[ip] if now - t < window]
     if len(RATE[ip]) >= limit:
