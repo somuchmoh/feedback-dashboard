@@ -414,6 +414,10 @@ def sanitize_success_metric(metric: str) -> str:
 
     return m
 
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health(response: Response):
+    return {"status": "ok"}
+
 @app.post("/load_demo")
 def load_demo(k: int=10):
     global DEMO_STATE
