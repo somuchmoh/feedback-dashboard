@@ -26,7 +26,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OPENROUTER_MODEL = "openai/gpt-oss-120b:free"
+OPENROUTER_MODEL = os.environ.get(
+    "OPENROUTER_MODEL",
+    "google/gemma-4-26b-a4b-it:free",
+)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
