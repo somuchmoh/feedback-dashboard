@@ -1,0 +1,145 @@
+{
+  "0": {
+    "evidence": [
+      "Internal review suggests improving onboarding guidance for database relations.",
+      "Design team recommends improving empty states during onboarding to better explain core concepts.",
+      "Onboarding assumes users already understand database concepts."
+    ],
+    "insight": {
+      "title": "New users need clearer guidance on database concepts",
+      "summary": "Several signals point to an onboarding gap around databases and relations. New users are expected to understand these concepts before the product has explained them.",
+      "recommended_action": "Introduce a guided database setup with contextual explanations for relations, supported by clearer empty states.",
+      "success_metric": "Increase completion of the database onboarding flow and reduce help requests about database relations.",
+      "risks": [
+        "Additional guidance may slow experienced users",
+        "Examples may not cover every database workflow",
+        "Completion alone may not prove understanding"
+      ],
+      "evidence_refs": [0, 1, 2]
+    }
+  },
+  "1": {
+    "evidence": [
+      "The editor becomes noticeably slow when working with large pages containing many blocks.",
+      "Editor performance degrades noticeably when pages include many embedded databases."
+    ],
+    "insight": {
+      "title": "Large pages create a noticeable editor performance problem",
+      "summary": "Customers report slower editing when pages contain many blocks or embedded databases. The pattern suggests page complexity is affecting core editor responsiveness.",
+      "recommended_action": "Profile large-page editing and prioritize rendering improvements for blocks and embedded databases.",
+      "success_metric": "Reduce median input latency and page-load time for pages with many blocks or embedded databases.",
+      "risks": [
+        "Optimizing synthetic large pages may miss real workflows",
+        "Rendering changes could introduce visual regressions",
+        "Performance may vary substantially by device"
+      ],
+      "evidence_refs": [0, 1]
+    }
+  },
+  "2": {
+    "evidence": [
+      "QA identified performance degradation in workspaces with more than 100 collaborators.",
+      "Workspace performance slows down significantly once a team reaches a certain size.",
+      "Workspace performance degrades as more members are added.",
+      "Workspace sync can take a long time after logging in.",
+      "Workspace performance slows down during peak collaboration hours.",
+      "Workspace load times increase as more integrations are added."
+    ],
+    "insight": {
+      "title": "Growing workspaces face compounding performance and sync delays",
+      "summary": "Performance degrades as workspaces add members, integrations, and concurrent activity. Slow loading and post-login sync make the issue especially visible to enterprise teams.",
+      "recommended_action": "Benchmark large workspaces, then target the highest-cost loading, sync, and collaboration paths.",
+      "success_metric": "Reduce p95 workspace load and sync time for large, integration-heavy workspaces.",
+      "risks": [
+        "A single benchmark may not represent enterprise configurations",
+        "Backend improvements may not address perceived frontend latency",
+        "Peak-hour behavior may be difficult to reproduce"
+      ],
+      "evidence_refs": [0, 1, 2, 3, 4, 5]
+    }
+  },
+  "3": {
+    "evidence": [
+      "Design review notes that the editor toolbar feels overcrowded and hard to scan.",
+      "Custom commands or keyboard shortcuts (e.g., templated formatting) would speed workflows.",
+      "Ability to set filters in relation properties so only relevant items show up.",
+      "During testing, pages with many nested blocks occasionally fail to save changes.",
+      "Ability to filter and show more properties when adding to relation fields.",
+      "QA testing found intermittent save failures when editing large documents.",
+      "Dynamically filtering relation suggestions would save time and reduce manual work.",
+      "It’s hard to understand how databases relate to each other when building more complex workflows."
+    ],
+    "insight": {
+      "title": "Complex editing workflows need greater clarity and reliability",
+      "summary": "The evidence combines workflow friction in relation-heavy editing with reliability problems on large documents. Users need faster ways to navigate complex edits without risking lost changes.",
+      "recommended_action": "Prioritize save reliability first, then simplify relation controls and shortcuts for frequent editing tasks.",
+      "success_metric": "Reduce save failures on large documents and time required to complete relation-filtering tasks.",
+      "risks": [
+        "The cluster combines several distinct editor problems",
+        "Simplifying controls may hide advanced functionality",
+        "Reliability fixes may require deeper architectural work"
+      ],
+      "evidence_refs": [0, 2, 3, 4, 5, 6, 7]
+    }
+  },
+  "6": {
+    "evidence": [
+      "QA testing reveals delayed updates when multiple users edit the same page concurrently.",
+      "Collaboration feels messy when multiple people edit the same page at the same time.",
+      "Collaboration can feel chaotic when multiple people edit the same page simultaneously.",
+      "Collaboration gets confusing when multiple people edit a page simultaneously."
+    ],
+    "insight": {
+      "title": "Concurrent editing lacks timely feedback and coordination cues",
+      "summary": "Delayed updates and unclear collaborator activity make simultaneous editing feel chaotic. Users cannot confidently tell what changed or whether their view is current.",
+      "recommended_action": "Improve update latency and add clearer presence and change indicators during concurrent editing.",
+      "success_metric": "Reduce synchronization delay and collaboration-related confusion reported during multi-user editing sessions.",
+      "risks": [
+        "More presence indicators could add visual noise",
+        "Network conditions may dominate perceived latency",
+        "Collaboration behavior varies by team size"
+      ],
+      "evidence_refs": [0, 1, 2, 3]
+    }
+  },
+  "7": {
+    "evidence": [
+      "Mobile editing feels limited compared to desktop, especially for database-heavy pages.",
+      "Mobile editing feels limited compared to desktop, especially for databases.",
+      "Mobile UI does not support all editor features available on desktop."
+    ],
+    "insight": {
+      "title": "Mobile editing falls short for database-heavy workflows",
+      "summary": "Customers see a clear feature gap between mobile and desktop editing. The limitation is most noticeable on pages that depend heavily on databases.",
+      "recommended_action": "Identify the highest-value missing database actions and bring those workflows to mobile first.",
+      "success_metric": "Increase successful completion of common database-editing tasks on mobile.",
+      "risks": [
+        "Desktop patterns may not translate well to small screens",
+        "Adding controls could make the mobile UI feel crowded",
+        "Feature parity may not address deeper usability issues"
+      ],
+      "evidence_refs": [0, 1, 2]
+    }
+  },
+  "9": {
+    "evidence": [
+      "Marketing proposes adding lightweight usage analytics to support growth experiments.",
+      "It would be useful to have basic analytics showing how often pages are viewed or edited.",
+      "Sales requests clearer workspace-level analytics to support enterprise demos.",
+      "Analytics would be more useful if they showed trends over time, not just totals.",
+      "Analytics should differentiate between viewers and editors."
+    ],
+    "insight": {
+      "title": "Teams need actionable usage analytics beyond aggregate totals",
+      "summary": "Customers and internal teams want analytics that explain how content is used over time. Viewer-editor distinctions and workspace-level trends would make the data more useful for decisions and demonstrations.",
+      "recommended_action": "Add trend views and role-based engagement breakdowns to workspace analytics.",
+      "success_metric": "Increase use of analytics views and the share of users who can answer page-engagement questions without exporting data.",
+      "risks": [
+        "More metrics may increase dashboard complexity",
+        "Usage data needs clear privacy controls",
+        "Engagement measures can be misinterpreted without context"
+      ],
+      "evidence_refs": [0, 1, 2, 3, 4]
+    }
+  }
+}

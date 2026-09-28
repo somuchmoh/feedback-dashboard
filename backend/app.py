@@ -43,13 +43,25 @@ STATE = {
     "tfidf_matrix": None,
     "kmeans": None,
     "theme_labels": None,
+    "dataset_source": None,
     "insight_cache": {},
     "rate_limit": {"ts": 0.0, "retry_after": 0}
 }
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-if not OPENROUTER_API_KEY:
-    raise RuntimeError("OPENROUTER_API_KEY is not set")
+
+
+def load_demo_insights() -> dict:
+    insights_path = Path(__file__).parent / "data" / "demo_insights.json"
+    try:
+        return json.loads(insights_path.read_text(encoding="utf-8"))
+    except Exception:
+        print("[startup] Stored demo insights could not be loaded:")
+        print(traceback.format_exc())
+        return {}
+
+
+DEMO_INSIGHTS = load_demo_insights()
 
 
 REQUIRED_COLS = ["id", "text", "source", "created_on", "segment", "product_area"]
@@ -410,10 +422,7 @@ def sanitize_success_metric(metric: str) -> str:
     has_hard_target = has_percent or has_timeframe
 
     if has_hard_target:
-        return (
-            "Reduce permission-related support tickets (weekly) and reduce time spent on permissions "
-            "during enterprise onboarding calls; track adoption of the updated permission audit view."
-        )
+        return "Track relevant support contacts and task completion for the affected workflow."
 
     return m
 
@@ -437,6 +446,7 @@ def load_demo(k: int=10):
         STATE["nn_model"] = DEMO_STATE["nn_model"]
         STATE["kmeans"] = DEMO_STATE["kmeans"]
         STATE["theme_labels"] = DEMO_STATE["theme_labels"]
+        STATE["dataset_source"] = "demo"
         STATE["insight_cache"] = {}
 
         return {
@@ -532,6 +542,7 @@ async def upload(file: UploadFile = File(...)):
     STATE["df"]["theme_id"] = theme_ids.astype(int)
     texts_all = STATE["df"]["text"].tolist()
     STATE["theme_labels"] = label_themes_tfidf(texts_all, theme_ids, topn=5)
+    STATE["dataset_source"] = "upload"
 
     
     # Lightweight sentiment for deployment (no transformers)
@@ -653,6 +664,25 @@ def theme_detail(theme_id: int, n: int = 10):
 
 INSIGHT_TTL_SECONDS = 60 * 30  # 30 minutes
 
+
+def stored_demo_insight_payload(theme_id: int, confidence: str):
+    if STATE.get("dataset_source") != "demo":
+        return None
+
+    stored = DEMO_INSIGHTS.get(str(int(theme_id)))
+    if not stored:
+        return None
+
+    return {
+        "theme_id": int(theme_id),
+        "confidence": confidence,
+        "insight": copy.deepcopy(stored["insight"]),
+        "evidence": list(stored["evidence"]),
+        "source": "stored_demo",
+        "disclaimer": "AI-assisted insight. Final decisions require human review.",
+        "message": "Showing a saved demo insight because live generation is temporarily unavailable."
+    }
+
 @app.get("/themes/{theme_id}/insight")
 def theme_insight(theme_id: int, n: int = 10, force: bool = False):
     if STATE.get("df") is None:
@@ -685,8 +715,9 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
         # TTL check
         ts = cached.get("_ts", 0.0)
         if (time_module.time() - ts) < INSIGHT_TTL_SECONDS:
-            cached.pop("_ts", None)
-            return cached
+            response = copy.deepcopy(cached)
+            response.pop("_ts", None)
+            return response
 
     # Token control: narrow to dominant product_area
     top_area = subset["product_area"].value_counts().idxmax()
@@ -706,6 +737,7 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
             "confidence": confidence,
             "insight": insight,
             "evidence": evidence_texts,
+            "source": "live",
             "disclaimer": "AI-assisted insight. Final decisions require human review."
         }
 
@@ -715,6 +747,10 @@ def theme_insight(theme_id: int, n: int = 10, force: bool = False):
     except Exception:
         print("INSIGHT ERROR TRACEBACK:")
         print(traceback.format_exc())
+        stored_payload = stored_demo_insight_payload(theme_id, confidence)
+        if stored_payload:
+            return stored_payload
+
         return {
             "theme_id": int(theme_id),
             "confidence": "medium" if len(subset) >= 10 else "low",
